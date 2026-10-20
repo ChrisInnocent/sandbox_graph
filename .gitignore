@@ -1,0 +1,12 @@
+# ===== 嵌套的独立 git 仓（由各自仓库自行管理）=====
+/AgentENV/
+/CubeSandbox/
+/kuasar-sandbox/
+/kuasar-components/
+
+# ===== 本地工具目录 =====
+/.codeartsdoer/
+
+# ===== 通用忽略 =====
+.DS_Store
+*.log
