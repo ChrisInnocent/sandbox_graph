@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sandbox-graph"
+version = "0.1.0"
+description = "Evidence-driven sandbox evaluation workflow"
+requires-python = ">=3.11,<3.15"
+dependencies = ["langgraph==1.2.16", "langgraph-checkpoint-postgres==3.2.0", "psycopg[binary]==3.3.6", "pydantic==2.14.1", "PyYAML==6.0.3", "openpyxl==3.1.5"]
+
+[project.optional-dependencies]
+test = ["pytest==9.1.1", "pytest-asyncio==1.4.0"]
+
+[project.scripts]
+sandbox-bench = "sandbox_bench.runner:main"
+
+[tool.setuptools.packages.find]
+include = ["sandbox_bench*", "sandbox_graph*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--import-mode=importlib"
+asyncio_mode = "auto"
+markers = ["postgres: requires a dedicated PostgreSQL database", "linux: requires Linux procfs/cgroup", "live: requires an explicitly supplied real environment"]

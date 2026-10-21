@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "source": "synthetic: hand calculated from BCT-02, independent of LoadEngine",
+  "requirements": ["BTC-016", "BTC-017"],
+  "request_count": 5,
+  "concurrency": 2,
+  "service_seconds": [1, 3, 2, 1, 1],
+  "window_submit": [0, 0, 1, 3, 3],
+  "window_complete": [1, 3, 3, 4, 4],
+  "batch_size": 2,
+  "gap_seconds": 2,
+  "batch_submit": [0, 0, 5, 5, 9],
+  "batch_complete": [1, 3, 7, 6, 10],
+  "batch_wall_seconds": 10
+}

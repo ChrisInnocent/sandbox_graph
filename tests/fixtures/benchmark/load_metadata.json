@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "classification": "synthetic",
+  "source": "BCT-02 hand calculations",
+  "input_ref": "tests/fixtures/benchmark/load_golden.json",
+  "sha256": "ee63f24d32f93a99299ad99a32510854c41ed2a2489864647c95aab1e5ed598e",
+  "oracle_independence": "Literal reference timestamps are not produced by LoadEngine."
+}

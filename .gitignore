@@ -10,3 +10,13 @@
 # ===== 通用忽略 =====
 .DS_Store
 *.log
+
+# Local evaluation environment and generated evidence
+/.venv/
+/.worktrees/
+/.superpowers/
+/__pycache__/
+**/__pycache__/
+/.pytest_cache/
+*.egg-info/
+/artifacts/

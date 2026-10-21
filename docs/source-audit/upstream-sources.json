@@ -1,0 +1,45 @@
+{
+  "note": "Read-only audited upstream checkouts; fixed commits, not deployment verification. Upstream code is not vendored in this project.",
+  "sources": [
+    {
+      "local_path": "AgentENV",
+      "repository": "https://github.com/kvcache-ai/AgentENV",
+      "commit": "49684233698d40dd800c1d0edba15ab30a745eeb"
+    },
+    {
+      "local_path": "CubeSandbox",
+      "repository": "https://github.com/TencentCloud/CubeSandbox",
+      "commit": "b25e416e990e6ba0641b4609974c53c61ee568f0"
+    },
+    {
+      "local_path": "kuasar-sandbox",
+      "repository": "https://github.com/kuasar-sandbox/kuasar-sandbox",
+      "commit": "ba218fc5f20973621277484b9144a8e838ffe840"
+    },
+    {
+      "local_path": "kuasar-components/orchestrator",
+      "repository": "https://github.com/kuasar-sandbox/orchestrator",
+      "commit": "c14da165ecc14de0e5c0afbfba2e1b737d64ee7c"
+    },
+    {
+      "local_path": "kuasar-components/sandboxer",
+      "repository": "https://github.com/kuasar-sandbox/sandboxer",
+      "commit": "3f4978c39499c98acd5e8a7b32d450bb66ea4db9"
+    },
+    {
+      "local_path": "kuasar-components/accelerator",
+      "repository": "https://github.com/kuasar-sandbox/accelerator",
+      "commit": "95776915855bcaab26646e82c79aafbada5338b1"
+    },
+    {
+      "local_path": "kuasar-components/connector",
+      "repository": "https://github.com/kuasar-sandbox/connector",
+      "commit": "8fc4b6a266ff551b2747a83f43ce1c8a717ef187"
+    },
+    {
+      "local_path": "kuasar-components/guest-runtime",
+      "repository": "https://github.com/kuasar-sandbox/guest-runtime",
+      "commit": "4407480f63da9ff54b460f8977724d7f3179da80"
+    }
+  ]
+}
