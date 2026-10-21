@@ -10,7 +10,7 @@ from sandbox_graph.runtime.leases import LeaseService
 
 
 def setup(repository):
-    compiler=PlanCompiler([Case(capability='supported',adapter_verified=True,case_id='case',group_id='G_A',sandbox_type='synthetic',scenario_id='B01',method_id='B01.TEMPLATE',priority='base',conditions=({'cpu':1},),conflict_domains=('host_A',))])
+    compiler=PlanCompiler([Case(capability='supported',adapter_verified=True,case_id='case',group_id='G_A',sandbox_type='synthetic',scenario_id='B01',method_id='B01.TEMPLATE',priority='base',conditions=({'cpu':1},),conflict_domains=('host_A',),artifact_kind='sandbox_artifact',launch_path='cold_boot',producer_step='pre_existing')])
     service=RunService(repository,compiler);plan=service.preview(Selection(),authorized_groups={'G_A'})
     run=service.start('start',plan.hash,authorized_groups={'G_A'})
     token=LeaseService(repository).acquire_thread(run.root_thread_id,'worker',100)

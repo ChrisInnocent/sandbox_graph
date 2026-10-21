@@ -13,6 +13,9 @@ def diff(old:dict,new:dict,*,available_events=frozenset()) -> ImpactPlan:
     changed=tuple(sorted(k for k in set(old)|set(new) if old.get(k)!=new.get(k)))
     keys=set(changed)
     if not keys: return ImpactPlan(changed_fields=(),rerun_nodes=(),requires_measurement=False,reason='identical')
+    identity={'artifact_kind','launch_path','producer_step','cost_scope','topology','endpoint_kind','readiness_signal','endpoint_ref'}
+    if keys & identity:
+        return ImpactPlan(changed_fields=changed,rerun_nodes=tuple(f'N{i:02}' for i in range(11)),requires_measurement=True,reason='source or endpoint identity changed; prior measurement is not reusable')
     if keys<={'wording'}: nodes=('F1','F2','F4');measurement=False;reason='presentation only'
     elif keys<={'layout','wording'}: nodes=('A7','F1','F2','F4');measurement=False;reason='workbook layout'
     elif keys<={'threshold','rules','wording','layout'}: nodes=('A3','A4','A5','A7','F1','F2','F4');measurement=False;reason='recompute using compatible raw evidence'

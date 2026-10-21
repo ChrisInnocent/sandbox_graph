@@ -18,3 +18,20 @@ def test_path_traversal_is_rejected(tmp_path):
     store = FileArtifactStore(tmp_path)
     with pytest.raises(ValueError):
         store.commit([b'abc'], scope='../outside', media_type='text/plain')
+
+
+def test_file_success_database_failure_leaves_a_recoverable_orphan(tmp_path):
+    store = FileArtifactStore(tmp_path)
+    ref = store.commit([b'payload'], scope='G_A', media_type='text/plain')
+    # The caller's ledger transaction failed after publication: no reference was written.
+    assert store.path_for(ref).exists()          # orphan is recoverable, not data loss
+    store.verify(ref)                            # content is intact
+    # A missing file must never verify as a valid delivery.
+    store.path_for(ref).unlink()
+    with pytest.raises(FileNotFoundError):
+        store.verify(ref)
+    # A tampered file must never verify as a valid delivery.
+    ref2 = store.commit([b'original'], scope='G_A', media_type='text/plain')
+    store.path_for(ref2).write_bytes(b'altered!')
+    with pytest.raises(ValueError):
+        store.verify(ref2)

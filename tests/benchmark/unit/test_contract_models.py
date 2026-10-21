@@ -11,7 +11,8 @@ def module():
 def sample():
     return dict(schema_version='case.v1', method_id='B01.TEMPLATE', method_version='1',
                 product='kuasar', product_version='source-sha', work_id='w', group_id='g',
-                source={'kind':'template','id':'e2b-snp-x','digest':'sha256:fixture'},
+                source={'kind':'template','id':'e2b-snp-x','digest':'sha256:fixture',
+                        'artifact_kind':'sandbox_artifact','launch_path':'cold_boot','producer_step':'pre_existing'},
                 spec={'vcpus':2,'memory_bytes':2147483648},
                 completion={'endpoint':'STATE_READY','timeout_s':5,'poll_interval_s':.1},
                 load={'mode':'WINDOW','requests':5,'concurrency':2,'run_timeout_s':20,

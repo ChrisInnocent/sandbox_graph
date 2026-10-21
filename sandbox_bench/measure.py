@@ -25,11 +25,14 @@ def probe(adapter, handle, timeout, marker=None):
 
 
 def create_sync(adapter, run_id, timeout, poll_interval, *, clock=time.monotonic,
-                sleep=time.sleep, on_created=None, completion="STATE_READY"):
+                sleep=time.sleep, on_created=None, completion="STATE_READY", endpoint=None):
     if timeout <= 0 or poll_interval <= 0:
         raise ValueError("timeout and poll interval must be positive")
     if completion not in ("API_COMPLETE", "STATE_READY", "EXEC_COMPLETE"):
         raise ValueError("unsupported completion; server logs require the audited observer")
+    if endpoint is not None and getattr(endpoint, "endpoint_kind", None) == "guest_ready":
+        raise ValueError("guest_ready endpoints are read via readiness, not create_sync")
+    synchronous = bool(endpoint is not None and getattr(endpoint, "synchronous", False))
     started = clock()
     deadline = started + timeout
     row = {"operation_id": uuid.uuid4().hex, "run_id": run_id,
@@ -56,10 +59,18 @@ def create_sync(adapter, run_id, timeout, poll_interval, *, clock=time.monotonic
         return finish("timeout" if isinstance(exc, TimeoutError) else "failed", "create_error")
 
     if completion == "API_COMPLETE":
+        if synchronous:
+            row["state_ready_s"] = row["api_complete_s"]
         return finish("success" if clock() < deadline else "timeout")
+    if synchronous:
+        # A synchronous entry already returned after ready: record readiness at the same
+        # moment and do not fabricate a second readiness delay by polling (BCD-13 §13.5).
+        row.setdefault("state_ready_s", row["api_complete_s"])
+        if completion == "STATE_READY":
+            return finish("success" if clock() < deadline else "timeout")
     while clock() < deadline:
         try:
-            if completion == "STATE_READY" or adapter.product == "kuasar":
+            if completion == "STATE_READY" or (adapter.product == "kuasar" and not synchronous):
                 state = adapter.info(handle, deadline - clock()).get("state")
                 row["observations"].append({"state": state, "offset_s": clock() - started})
                 if state in ("failed", "stopped", "deleted", "paused"):

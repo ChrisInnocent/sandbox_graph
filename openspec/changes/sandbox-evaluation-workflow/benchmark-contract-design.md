@@ -134,13 +134,72 @@ API fixture 以审计的 schema 和源码分支手工编码，不通过生产 ad
 | WF-06–08/20–24/31/36；交付／恢复 | 01–03/10 | 019、048–052、058 | 15/25 |
 | RT-01/02/07/08/30；跨候选实际证据 | 04–10 | 056–060 | 26 |
 
-B01–B10 的所有子方法以场景文件中的参数化 case_id 展开，不能只测一个示例就声称全方法覆盖；E01–E06 按其显式选择与适配状态记录。原 ORC-059–064 只验证图透传，BTC 验实际算法，两者都保留。
+B00–B10 的所有子方法以场景文件中的参数化 case_id 展开，不能只测一个示例就声称全方法覆盖；E01–E06 按其显式选择与适配状态记录。原 ORC-059–064 只验证图透传，BTC 验实际算法，两者都保留。
 
 ### BCT-08 变异与准入
 
 必须能捕获的变异：201释放槽、WINDOW误写gather、失败补到成功Q、尾批后加gap、net_growth改新增成功、requested当真实存活、去掉start_ticks、PSS换RSS、各组件峰值相加、缺样填0、Guest减配置内存、超时当成功时延、恢复新建operation、cleanup删全环境、ready使用注册tid、缺end照算命令成功。
 
 实现前独立 fixture/oracle 先落地；每组任务同时交付 tests 与模块文档。核心算法测试通过后再做真实Linux及产品 smoke。真实环境无法提供时实现和离线验证可继续，但 BTC-059/060 与 environment_verified 保持未完成，不据此声称完整选型测试完成。
+
+### BCT-09 来源产物与构建场景的独立测试合同
+
+对应 [benchmark-design.md](benchmark-design.md) BCD-12 与 tasks 组 27。oracle 不得调用被测函数生成期望值。
+
+| 编号 | 被测 | 独立 oracle | 关键断言 |
+|---|---|---|---|
+| BCT-09-SRC | `resolve_source` | 测试内字面量表 | 固定 `(product, parameter_name, declared_kind)` → 期望 `artifact_kind`／`launch_path`；缺版本→`unverified`；名为 template 实为 snapshot → `snapshot_manifest` |
+| BCT-09-ROUTE | `method_for_source` | 决策表 12.2 的独立副本 | 全表覆盖；未覆盖组合→`ScenarioBlocked`；同族冲突不静默 |
+| BCT-09-BUILD-READY | `build_source` | 脚本化 job status 序列 fixture | `(building,ready)`→`terminal='ready'`，`artifact.kind` 正确，trigger 恰好一次 |
+| BCT-09-BUILD-ERROR | 同上 | `(building,error)`／`(building,unknown)`／超时 | `terminal='error'`，无伪造 ready；证据封存 |
+| BCT-09-BUILD-LOST | 同上 | 写响应丢失脚本 | 重启后按 handle 对账，trigger 不重复；`unresolved_external` 正确 |
+| BCT-09-COST | 成本归集 | 手工预算账本 | 共享 `producer_ref` 两用例→构建只计一次；`reuse_of` 记录 |
+| BCT-09-SNAP | `B01.SNAPSHOT.*` | 固定 resolution | DISK／MEMORY 得不同 method_id，分析层不合并 |
+| BCT-09-REJECT | `CaseContract` 校验 | 非法用例 fixture | B01. 缺 kind／path 报错；MEMORY 配 disk_restore 报错；TEMPLATE 配 snapshot_manifest 报错 |
+
+层级与目录：`tests/benchmark/unit/test_source_resolution.py`、`tests/benchmark/contract/test_build_scenario.py`、`tests/benchmark/integration/test_b00_build_reentry.py`（三类独立 marker，不共用数据库／故障夹具）。受控轨迹通过只提升代码契约状态，不声称真实环境验证。
+
+### BCT-10 创建端点拓扑与就绪信号的独立测试合同
+
+对应 [benchmark-design.md](benchmark-design.md) BCD-13 与 tasks 组 28。oracle 不得调用被测函数生成预期值。
+
+| 编号 | 被测 | 独立 oracle | 关键断言 |
+|---|---|---|---|
+| BCT-10-TOPO | `resolve_endpoint` | 测试内字面量表（topology × 产品 → endpoint／synchronous） | Kuasar router→同步；Kuasar node_direct→异步需轮询；Cube／AgentENV→同步；缺证据→`unverified` |
+| BCT-10-SYNC-ROUTER | 同步入口 | 一次调用即 running 的脚本序列 | `endpoint_requires_poll==False`；不得再报一次就绪延迟；`api_complete==state_ready` 为同一时刻 |
+| BCT-10-ASYNC-NODE | 异步入口 | `(starting,…,running)` 轮询序列 fixture | 受理记 `api_complete_s`，轮询到 running 记 `state_ready_s`；二者分列；不得把受理当完成 |
+| BCT-10-READY-FD | `read_ready_fd` | 独立 `control_ready\nready\nEOF` 字节流 | 正确解析；缺 `control_ready`、超长行、ready 后多余字节、超时均判 `unverified`，不补零 |
+| BCT-10-BLOCKED | 拓扑核验 | 无管理面角色的声明 fixture | `status=='blocked'`，不静默回退 node_direct |
+| BCT-10-COMPARABILITY | `endpoint_comparable` | 手工端点对 | 异 `endpoint_kind`→False；`guest_ready` vs `state_ready`→False；同黑盒端点→True |
+
+层级与目录：`tests/benchmark/unit/test_endpoint_resolution.py`、`tests/benchmark/contract/test_ready_fd.py`（独立 marker，不共用数据库／故障夹具）。受控轨迹通过只提升代码契约状态，不声称真实环境验证。
+
+### BCT-11 测试间环境还原的独立测试合同
+
+对应 [benchmark-design.md](benchmark-design.md) BCD-14 与 tasks 组 34。oracle 为手写的假列表／假时钟，不调用被测函数生成预期。
+
+| 编号 | 被测 | 独立 oracle | 关键断言 |
+|---|---|---|---|
+| BCT-11-BATCH | `restore_environment` | 手写 7 个归属实例，批大小 3 | 轮次 `[3,3,1]`，非一次性全删 |
+| BCT-11-WARM | 预热／基线排除 | 假列表含无 run_id 的预热、同 run_id 基线 | 两者均不被删；不因此判失败 |
+| BCT-11-ASYNC | 异步 settle | 删除后实例仍列出 N 轮 | 未 settle → `incomplete` ＋ `residual_ids` 保留 |
+| BCT-11-FAIL | 单删失败 | 假列表指定某个 id 删除失败 | `failures` 记录身份，计入残留，`incomplete` |
+| BCT-11-SCOPE | `select_batch` | 字面量集合 | 只本轮归属、排除基线、批大小上限 |
+
+层级与目录：`tests/benchmark/unit/test_restore.py`（独立 marker `restore`，不共用数据库／故障夹具）。受控轨迹通过只提升代码契约状态，不声称真实环境验证。
+
+### BCT-12 背景条件合同与 B00 背景密度/指标的独立测试合同
+
+对应 BCD-16 §16.4、BCD-12 §12.9/§12.10 与 tasks 组 36/37。oracle 为手写字段表／假 adapter／注入采样序列，不调用被测函数生成预期。
+
+| 编号 | 被测 | 独立 oracle | 关键断言 |
+|---|---|---|---|
+| BCT-12-COND | `validate_conditions` | 字面量字段表 | 缺 R 字段→合同错误；O 缺省→`not_selected`；未选不默认取值 |
+| BCT-12-ACTUAL | 声明 vs 实现 | 声明 N=5 实际 N=3 | 标条件受限，不当达成 |
+| BCT-12-BGDENSITY | `BuildScenario` 背景 | 假 adapter 预创建 N | 背景 N 个被创建；构建在背景存在下；增量资源=total−baseline；背景不足→blocked |
+| BCT-12-BUILDMETRIC | `build_source` 指标 | 注入采样序列 + 产物元数据 | `resource_peak`/`artifact.size_bytes`/`cache_state` 被填充；缺样本 `unavailable` 不补零 |
+
+层级与目录：`tests/benchmark/contract/test_conditions.py`、`tests/benchmark/contract/test_build_density.py`（独立 marker，不共用数据库／故障夹具）。受控通过只提升代码契约状态，不声称真实环境验证。
 
 ## Risks / Trade-offs
 

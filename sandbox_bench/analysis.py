@@ -248,13 +248,30 @@ def analyze_case(records):
     if window is not None:
         args={k:v for k,v in window.items() if k not in {'start_s','end_s'}}
         result['throughput']=throughput(records['events'],window['start_s'],window['end_s'],**args)
+    attribution=None
+    if records['resource_series'] and records.get('inventory'):
+        from .attribution import attribution_report, attributed_series, expected_identity_keys, inventory_index
+        index=inventory_index(records['inventory'])
+        filtered,_,_=attributed_series(records['resource_series'],index)
+        attribution=attribution_report(records['resource_series'],records['inventory'])
+        records={**records,'resource_series':filtered,'expected_components':expected_identity_keys(index)}
     if records['resource_series']:
         result['resources']=_attributed_resources(records,window)
         steady=records.get('steady')
         if isinstance(steady,dict) and steady.get('status')=='steady':
             result['resources']['steady']=_attributed_resources(records,steady)
         else:result['resources']['steady']={'status':'unavailable','reason':'eligible_steady_window_missing'}
+        if attribution is not None:
+            result['resources']['attribution']=attribution
+            if attribution['status']!='valid':
+                result['resources']['status']='partial'
+                result['resources']['attribution_reason']='unattributed_or_reused_processes_excluded'
     else:result['resources']['guest_net_pss']={'status':'unavailable','reason':'missing_guest_definition','net_pss_bytes':None}
+    cgroup_series=records.get('cgroup_series') or []
+    if cgroup_series:
+        from .metrics import cgroup_cpu_seconds, cgroup_true_peak
+        result['resources']['cgroup']={**cgroup_true_peak(cgroup_series), **cgroup_cpu_seconds(cgroup_series),
+                                        'note':'cgroup peak/CPU are not PSS and never substitute it'}
     # JSON-normalize integer repeat keys so export/recompute are byte-equivalent.
     return json.loads(_json(result))
 

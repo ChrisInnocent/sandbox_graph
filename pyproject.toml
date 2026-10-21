@@ -23,4 +23,4 @@ include = ["sandbox_bench*", "sandbox_graph*"]
 testpaths = ["tests"]
 addopts = "--import-mode=importlib"
 asyncio_mode = "auto"
-markers = ["postgres: requires a dedicated PostgreSQL database", "linux: requires Linux procfs/cgroup", "live: requires an explicitly supplied real environment"]
+markers = ["postgres: requires a dedicated PostgreSQL database", "linux: requires Linux procfs/cgroup", "live: requires an explicitly supplied real environment", "b00_build: independent B00 build re-entry checks without shared DB/fault fixtures", "endpoint: independent endpoint topology/readiness checks without shared DB/fault fixtures", "restore: independent environment-restore checks without shared DB/fault fixtures"]

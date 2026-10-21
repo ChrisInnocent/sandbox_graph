@@ -22,7 +22,9 @@ class TaskBackend:
     def __init__(self,repository): self.repository=repository
     @staticmethod
     def enqueue_in(tx,spec):
-        body=spec.model_dump(mode='json'); digest=canonical_hash(body)
+        # Dedupe binds the logical job input; the freshly generated job_id is identity, not input.
+        body=spec.model_dump(mode='json')
+        digest=canonical_hash({k:v for k,v in body.items() if k!='job_id'})
         old=tx.get('job_dedupe',spec.dedupe_key)
         if old:
             if old['body']['hash']!=digest: raise Conflict('dedupe key has different job input')

@@ -10,7 +10,8 @@ NODE_GROUPS = {
     'report': ('F1', 'F2', 'F4'),
 }
 METHODS = (
-    'B01.TEMPLATE', 'B01.SNAPSHOT', 'B02.FULL', 'B02.PREPARED', 'B03.PAUSE',
+    'B00.TEMPLATE_BUILD', 'B00.SNAPSHOT_BUILD',
+    'B01.TEMPLATE', 'B01.SNAPSHOT.DISK', 'B01.SNAPSHOT.MEMORY', 'B02.FULL', 'B02.PREPARED', 'B03.PAUSE',
     'B04.MEMORY', 'B04.DISK', 'B05.FULL', 'B05.PREPARED', 'B05.NATIVE',
     'B06.RUNNING', 'B06.PAUSED', 'B07.FIRST', 'B07.STEADY', 'B07.OUTPUT', 'B07.ERROR',
     'B08.LOCAL', 'B08.PUBLISHED', 'B09.PLATFORM', 'B09.IDLE', 'B09.PAUSED',
@@ -46,6 +47,10 @@ class Registry:
     def resolve_method(self, method_id: str, version: str = '1') -> dict:
         return dict(self.methods[(method_id, version)])
 
+    def capability(self, method_id: str, version: str = '1') -> str:
+        """Adapter capability is independent of registration; unverified by default."""
+        return self.methods.get((method_id, version), {}).get('adapter_status', 'unverified')
+
     def register_handler(self, name: str, handler: Callable):
         if name in self.handlers and self.handlers[name] is not handler:
             raise ValueError('handler reference is immutable')
@@ -58,5 +63,8 @@ def standard_registry() -> Registry:
         for node in nodes:
             r.nodes[node] = NodeDefinition(node, node, group, 'external_mutation' if node in {'C2','N02','N05','N09'} else 'read_only')
     for method in METHODS:
-        r.methods[(method, '1')] = {'method_id': method, 'version': '1', 'node_id': 'N05', 'adapter_status': 'unverified'}
+        creation = method.startswith(('B00.', 'B01.'))
+        r.methods[(method, '1')] = {'method_id': method, 'version': '1', 'node_id': 'N05', 'adapter_status': 'unverified',
+                                    'identity_dimensions': ['artifact_kind', 'launch_path', 'producer_step', 'cost_scope'] if creation else [],
+                                    'endpoint_dimensions': ['topology', 'endpoint_kind', 'readiness_signal'] if method.startswith(('B01.', 'B02.')) else []}
     return r

@@ -186,6 +186,18 @@ class ScenarioExecutor:
         method = self.case.method_id
         if self.case.completion.endpoint == 'SERVER_TERMINAL' and self.terminal_provider is None:
             raise ScenarioBlocked('correlated_terminal_provider_required')
+        if method.startswith(('B01.', 'B02.')) and self.case.source.artifact_kind and self.case.source.launch_path:
+            # 已声明身份维度的用例必须与 BCD-12 §12.2 路由一致，不得命名所致误归类。
+            from .source_resolution import Resolution, method_for_source
+            source = self.case.source
+            resolution = Resolution(source.artifact_kind, source.launch_path,
+                                    source.producer_step or 'pre_existing', source.id, source.digest,
+                                    source.producer_ref, 'request',
+                                    source.resolution_ref or self.case.contract_ref, 'resolved')
+            cost_scope = 'build_included' if source.producer_step == 'build_job' else 'prepared'
+            family = 'image' if method.startswith('B02') else 'template'
+            if method_for_source(resolution, cost_scope=cost_scope, family=family) != method:
+                raise ScenarioBlocked('source_identity_method_mismatch')
         if method == 'B02.FULL' and self.on_progress is None:
             raise ScenarioBlocked('durable_build_progress_callback_required')
         if method.startswith(('B03.', 'B04.', 'B05.', 'B06.', 'B07.', 'B08.')):
@@ -253,11 +265,39 @@ class ScenarioExecutor:
         if not self.case.method_id.startswith(('B09.', 'B10.')):
             raise ScenarioBlocked('cohort_member_requires_density_or_noise_contract')
         member = copy.copy(self)
-        method = {'template':'B01.TEMPLATE','snapshot':'B01.SNAPSHOT','image':'B02.FULL'}[self.case.source.kind]
-        member.case = self.case.model_copy(update={'method_id':method})
+        method, source = self._member_identity()
+        member.case = self.case.model_copy(update={'method_id': method, 'source': source})
         return await member.execute(index)
 
+    def _member_identity(self):
+        """派生 cohort 成员用例的方法与来源身份；歧义的快照身份必须显式声明。"""
+        source = self.case.source
+        if source.artifact_kind and source.launch_path:
+            from .source_resolution import Resolution, method_for_source
+            resolution = Resolution(source.artifact_kind, source.launch_path,
+                                    source.producer_step or 'pre_existing', source.id, source.digest,
+                                    source.producer_ref, 'request',
+                                    source.resolution_ref or self.case.contract_ref, 'resolved')
+            cost_scope = 'build_included' if source.producer_step == 'build_job' else 'prepared'
+            family = 'image' if source.kind == 'image' else 'template'
+            return method_for_source(resolution, cost_scope=cost_scope, family=family), source
+        if source.kind == 'snapshot':
+            # 快照磁盘恢复与内存恢复不可由名称区分，必须声明维度。
+            raise ScenarioBlocked('cohort_source_identity_required')
+        artifact_kind, launch_path = {
+            'template': ('sandbox_artifact', 'cold_boot'),
+            'image': ('image_artifact', 'cold_boot'),
+        }[source.kind]
+        declared = source.model_copy(update={'artifact_kind': artifact_kind, 'launch_path': launch_path,
+                                             'producer_step': source.producer_step or 'pre_existing'})
+        return {'template': 'B01.TEMPLATE', 'image': 'B02.FULL'}[source.kind], declared
+
     async def execute(self, index: int) -> OperationResult:
+        if self.case.method_id.startswith('B00.'):
+            from .scenarios_build import BuildScenario
+            builder = BuildScenario(self.case, self.adapter, on_progress=self.on_progress,
+                                    stage_journal=self.stage_journal, clock=self.clock, sleep=self.sleep)
+            return await builder.execute(index)
         try:
             self.preflight(index)
         except ScenarioBlocked as error:

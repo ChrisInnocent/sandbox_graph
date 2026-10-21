@@ -62,6 +62,8 @@ L2/L3 必须使用 D01 选定的正式持久后端；InMemorySaver 的成功不�
 | I10 | 采样、发压、等待、重试均有边界；数据缺失不当零 | 时钟推进、调用数、缺失状态 |
 | I11 | 已完成的局部工作不因其他组失败而全部重跑 | 每个 work 的实际执行次数 |
 | I12 | 有效失败和不可比较项始终保留覆盖位置 | 计划分母、报告条目与状态 |
+| I13 | 同一 WorkKey／比较键不含混端点；白盒 `guest_ready` 不与黑盒 `state_ready` 合并 | 分组查询比较键与实际样本 scope |
+| I14 | 声明管理面入口但未核验到管理面角色即 blocked；未解析来源／端点不被默认值填充 | 拓扑核验调用记录与 case 字段、blocked 出口 |
 
 ### T04. 选测、图定义与环境路由
 
@@ -203,16 +205,17 @@ ORC-069 的 10,000 仅为工程压力夹具，不是用户测量规模。测试�
 | ENV-22、RT-19–21、31–32；N04/N06 | D07、D11 | ORC-025、027、042、063–064 |
 | RT-01–08、18、23、33、35；T0/T1/T2/T4/T5 | D07–D08、D10–D11 | ORC-001–006、015、027、036、070 |
 | RT-09–17、22、24–30、34、36–37；N00–N10 | D06–D07、D11 | ORC-016–018、024–028、041–042、059–064 |
+| RT-40–42；来源产物与创建端点身份 | D17、D11 | ORC-071–073 |
 | T8/GE、所有复核与发布 | D09、D13 | ORC-037–040、046–051、065–068 |
 | R4/R5/R8/RX、E3、T3/T7、GM/GD、A6、F3 | D07、D13 | ORC-002、011、015、024、046–058、070 |
 
-本矩阵表示编排层追溯，不声称覆盖所有产品行为。RT 生命周期内容正确性、ENV 安装命令实际效果和真实资源精度还需要 L5 的实际适配测试。方法目录 B01–B10/E01–E06 的通用节点绑定由 ORC-027 参数化覆盖。
+本矩阵表示编排层追溯，不声称覆盖所有产品行为。RT 生命周期内容正确性、ENV 安装命令实际效果和真实资源精度还需要 L5 的实际适配测试。方法目录 B00–B10/E01–E06 的通用节点绑定由 ORC-027 参数化覆盖。
 
 ### T11. 属性测试与故障验收
 
-对以下输入做有限种子属性测试：重复／乱序事件、选测组合、状态更新序列、两 worker 的 claim/renew/expire 顺序、receipt/checkpoint 崩溃切点。检验 I01–I12，不用复制生产实现作为 oracle。
+对以下输入做有限种子属性测试：重复／乱序事件、选测组合、状态更新序列、两 worker 的 claim/renew/expire 顺序、receipt/checkpoint 崩溃切点。检验 I01–I14，不用复制生产实现作为 oracle。
 
-必备变异反例：将 accepted 当 complete、把 `+1` 作为完成计数、删除 fence 校验、将 lease expiry 当资源释放、让 A1 读取 latest、跳过 N09、将 wait timeout 当批准、把缺测补零。对应测试必须失败，证明断言能捕获目标错误。变异检查针对关键协议，不为了覆盖率生成无意义测试。
+必备变异反例：将 accepted 当 complete、把 `+1` 作为完成计数、删除 fence 校验、将 lease expiry 当资源释放、让 A1 读取 latest、跳过 N09、将 wait timeout 当批准、把缺测补零、把 `guest_ready` 与 `state_ready` 合并、声明 router 但无管理面仍放行。对应测试必须失败，证明断言能捕获目标错误。变异检查针对关键协议，不为了覆盖率生成无意义测试。
 
 异常分类测试需覆盖重试可成功、预算耗尽、永久失败、unknown-effect 和 performance-fail；只有 TRANSIENT_READ 等明确可重试错误自动有限重试。回归测试在新问题出现时追加最小反例，不无条件反复跑所有无关层。
 
@@ -230,6 +233,29 @@ Q3 已确认，实施分组见 [tasks.md](tasks.md)；未回答的真实测试�
 6. 真实沙箱适配验收状态单列；编排通过不能被改写为 Cube/Kuasar/AgentENV 性能测试通过。
 
 建议结果记录：`test_id / level / fixture_hash / requirement_refs / design_refs / versions / outcome / assertions / artifact_refs / blocked_reason`。未来命令与脚本路径在实现后固化；本设计不把尚不存在的 pytest 文件或 CLI 当成已经可执行的验收命令。
+
+### T13. 创建端点与来源身份的契约测试（D17）
+
+对应 D17、BCD-12／BCD-13 与 BCT-09／BCT-10；图只验证字段绑定、校验收口与可比性键，不重算脚本内算法。oracle 用显式字面量，不调用被测归约／路由函数生成预期。
+
+| ID／层 | Given / 注入 | When | Then：精确预期 |
+|---|---|---|---|
+| ORC-071 L0/L1 | 声明 router 但 `management_plane_present=false`；声明 `co_located_cli` 但 `readiness_signal!=ready_fd`；B01. 缺 `artifact_kind` | N00 preflight／端点解析 | 全部 `blocked`；不静默回退 node_direct、不填默认 kind；远端拓扑出现 `ready_fd` 被拒 |
+| ORC-072 L1/L4 | 同方法下两条样本：一条 `state_ready`（黑盒）、一条 `guest_ready`（白盒）；另有 router 同步样本 `api_complete==state_ready` | N08/T8 分析与分组 | 白盒与黑盒分属不同比较键、不并入同一分位数；router 同步样本不额外产生第二次就绪延迟 |
+| ORC-073 L1/L4 | 同一“模板”参数解析为 `image_artifact+cold_boot` 与 `snapshot_manifest+memory_restore` 两变体；`B01.SNAPSHOT.DISK` 与 `.MEMORY` | 选测编译与 WorkKey 生成 | 两种来源与端点产出不同 `method_id`／`condition_hash`，不合并；未解析来源标 `unverified` 且不作已知值参与比较 |
+
+ORC-071–073 只提升编排层合同覆盖，不声称 BCD-12／BCD-13 的脚本算法或真实产品语义已验证；后者由 benchmark 契约测试与真实适配验收分别证明。
+
+### T14. 测试间环境还原的图编排契约测试（D19）
+
+对应 D19、WF-37／RT-43 与 BCD-14／BCT-11。oracle 用假列表／假 gateway，不调用被测函数生成预期。
+
+| ID／层 | Given / 注入 | When | Then：精确预期 |
+|---|---|---|---|
+| ORC-074 L1/L4 | 账本已登记部分资源，另有未入账的孤儿沙箱（同 run_id）；预热与基线实例共存 | N09／run-scope cleanup | 孤儿被扫描删除并入清理证据；预热／基线不被删；逐资源与扫描结果并集进入 `cleanup_status` |
+| ORC-075 L1/L4 | 扫描后仍有一个同 run_id 实例残留（或单删失败） | N09 → closure | `cleanup_status=incomplete`，`ClosureService` 判 `partial`，保留残留身份与恢复入口 |
+
+层级与目录：`tests/orchestration/unit/`（图侧）与 `tests/benchmark/unit/`（脚本侧）分开；oracle 独立、不共用生产归约。受控通过只提升代码契约状态，不声称真实环境已验证。
 
 ## Risks / Trade-offs
 

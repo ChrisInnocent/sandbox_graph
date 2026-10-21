@@ -60,6 +60,26 @@ class Adapter:
                 raise ValueError("API credential environment variable is missing")
             self.headers["X-API-Key"] = secret
 
+    def probe_topology(self, topology, timeout):
+        """Read-only creation-entry topology probe (BCD-13 §13.4).
+
+        Never triggers create/build/capture. Absent explicit evidence the answer is
+        None (unverified), never guessed from the topology or URL alone.
+        """
+        if topology not in ("router", "node_direct", "co_located_cli"):
+            raise ValueError("unsupported topology")
+        if topology == "co_located_cli":
+            return {"topology": topology, "management_plane_present": False,
+                    "evidence": "co_located_no_control_plane"}
+        declared = self.config.get("management_plane_present")
+        if declared is None:
+            return {"topology": topology, "management_plane_present": None,
+                    "evidence": "undeclared"}
+        if not isinstance(declared, bool):
+            raise ValueError("management_plane_present must be boolean")
+        return {"topology": topology, "management_plane_present": declared,
+                "evidence": "declared"}
+
     def _control(self, method, path, timeout, body=None):
         encoded = None if body is None else json.dumps(body, allow_nan=False).encode()
         return request(method, self.api_url + path, body=encoded,
@@ -312,3 +332,104 @@ class Adapter:
             if status=="error":raise ValueError("image build failed")
             if status!="building":raise ValueError("unknown build status")
             time.sleep(min(poll_interval,remaining(deadline)))
+
+    def resolve_source(self, declared_source, timeout):
+        """只读来源身份解析（BCD-12 §12.4）。绝不触发 build/capture。
+
+        无法从审计证据确认时返回 `resolution_status='unverified'`，不按参数名推断。
+        """
+        if not isinstance(declared_source, dict):
+            raise ValueError("declared source must be a mapping")
+        kind, sid = declared_source.get("kind"), declared_source.get("id")
+        base = {"schema_version": "source.v2", "product": self.product,
+                "product_version": str(self.config.get("product_version") or ""),
+                "parameter_name": self.config.get("source_parameter", "source"),
+                "declared_kind": kind, "artifact_id": sid,
+                "artifact_digest": declared_source.get("digest"),
+                "producer_ref": declared_source.get("producer_ref"),
+                "path_evidence": f"docs/source-audit/{self.product}.md",
+                "producer_step": "pre_existing", "spec_origin": "request",
+                "resolution_status": "unverified"}
+        if declared_source.get("artifact_kind") and declared_source.get("launch_path"):
+            return {**base, "artifact_kind": declared_source["artifact_kind"],
+                    "launch_path": declared_source["launch_path"],
+                    "producer_step": declared_source.get("producer_step", "pre_existing"),
+                    "resolution_status": "resolved"}
+        if self.product == "agentenv":
+            if kind in ("template", "snapshot"):
+                return {**base, "artifact_kind": "snapshot_manifest", "launch_path": "memory_restore",
+                        "spec_origin": "inherited", "resolution_status": "resolved"}
+            if kind == "image":
+                return {**base, "artifact_kind": "image_artifact", "launch_path": "cold_boot",
+                        "resolution_status": "resolved"}
+        if self.product == "kuasar" and kind == "template":
+            from .source_resolution import kuasar_template_kind
+            identity = kuasar_template_kind(sid)
+            if identity:
+                return {**base, "artifact_kind": identity[0], "launch_path": identity[1],
+                        "resolution_status": "resolved"}
+        # CubeSandbox 模板/快照同命名空间，只读接口无法区分；不得按名称猜测。
+        return base
+
+    def build_source(self, run_id, timeout, *, handle=None, on_progress=None):
+        """B00 阶段机（BCD-12 §12.5）。丢失写响应不重试：先持久 handle，再对账。
+
+        返回 {artifact:{kind,id,digest,size_bytes}, build_elapsed_s, terminal,
+        cache_state, resource_peak, unresolved_external, handle}。
+        """
+        if type(timeout) not in (int, float) or timeout <= 0:
+            raise ValueError("finite build timeouts required")
+        if handle is not None and not handle.get("triggered"):
+            return self._build_terminal(None, "unknown", 1, "build_trigger_unconfirmed", handle)
+        if self.product == "agentenv":
+            return self._build_snapshot_from_builder(run_id, timeout, handle=handle, on_progress=on_progress)
+        try:
+            built = self.build_image(run_id, timeout, self.config.get("poll_interval_s", 1.0),
+                                     handle=handle, on_progress=on_progress)
+        except (TimeoutError, TransportError) as error:
+            return self._build_terminal(None, "unknown", 1, "build_unresolved_external", handle,
+                                        type(error).__name__)
+        except ValueError as error:
+            return self._build_terminal(None, "error", 0, "build_failed", handle, type(error).__name__)
+        artifact_kind = ("snapshot_manifest" if self.config.get("source", {}).get("kind") == "snapshot"
+                         else "image_artifact")
+        artifact = {"kind": artifact_kind, "id": built["source_id"],
+                    "digest": built.get("digest"), "size_bytes": built.get("size_bytes")}
+        record = {"registration_id": built.get("registration_id"), "build_id": built.get("build_id"),
+                  "triggered": built.get("triggered", True)}
+        return self._build_terminal(artifact, "ready", 0, None, record,
+                                    build_elapsed_s=built.get("build_elapsed_s"),
+                                    cache_state=built.get("cache_state", "unknown"),
+                                    resource_peak=built.get("resource_peak"))
+
+    def _build_snapshot_from_builder(self, run_id, timeout, *, handle=None, on_progress=None):
+        """AgentENV 构建模板 = template_builder sandbox + publish_captured → 新 SnapshotId。"""
+        builder = self.config.get("builder")
+        if not isinstance(builder, dict) or builder.get("kind") not in ("template", "image") or not builder.get("id"):
+            raise ValueError("agentenv build_source requires a configured builder source contract")
+        notify = on_progress or (lambda row: None)
+        run_adapter = Adapter({**self.config, "source": {"kind": builder["kind"], "id": builder["id"]}})
+        notify({"phase": "intent", "stage": "build_register"})
+        sandbox = run_adapter.create(run_id + ":builder", timeout)
+        notify({"phase": "receipt", "stage": "build_register", "sandbox_id": sandbox["sandbox_id"]})
+        try:
+            captured = run_adapter.snapshot(sandbox, timeout)
+        finally:
+            try:
+                run_adapter.delete(sandbox, timeout)
+            except Exception:
+                pass
+        artifact = {"kind": "snapshot_manifest", "id": captured["source_id"],
+                    "digest": None, "size_bytes": None}
+        notify({"phase": "observed", "stage": "build_ready", **artifact})
+        return self._build_terminal(artifact, "ready", 0, None,
+                                    {"registration_id": captured["source_id"], "build_id": None,
+                                     "triggered": True})
+
+    def _build_terminal(self, artifact, terminal, unresolved, reason, handle, error_type=None,
+                        build_elapsed_s=None, cache_state='unknown', resource_peak=None):
+        return {"artifact": artifact, "terminal": terminal,
+                "unresolved_external": unresolved, "reason": reason, "handle": handle,
+                "build_elapsed_s": build_elapsed_s, "cache_state": cache_state,
+                "resource_peak": resource_peak or {"pss_bytes": None, "cpu_seconds": None},
+                "error_type": error_type}

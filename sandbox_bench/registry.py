@@ -1,6 +1,7 @@
 """方法目录与能力证据分离；目录不是可运行或environment_verified证明。"""
 METHODS = {
-    'B01.TEMPLATE': 'create', 'B01.SNAPSHOT': 'create',
+    'B00.TEMPLATE_BUILD': 'build', 'B00.SNAPSHOT_BUILD': 'build_snapshot',
+    'B01.TEMPLATE': 'create', 'B01.SNAPSHOT.DISK': 'create', 'B01.SNAPSHOT.MEMORY': 'create',
     'B02.FULL': 'image', 'B02.PREPARED': 'create',
     'B03.PAUSE': 'pause', 'B04.MEMORY': 'resume', 'B04.DISK': 'resume',
     'B05.FULL': 'clone', 'B05.PREPARED': 'clone', 'B05.NATIVE': 'fork',

@@ -169,3 +169,39 @@ def cohort_pss(cohort,per_instance,*,shared_bytes=None,baseline_bytes=None):
             'shared_bytes':shared_bytes,
             'with_shared_mean_bytes':(total+shared_bytes)/n if complete and shared_bytes is not None else None,
             'incremental_mean_bytes':(total+shared_bytes-baseline_bytes)/n if complete and shared_bytes is not None and baseline_bytes is not None else None}
+
+
+def cgroup_true_peak(samples):
+    """Kernel high-water memory peak from cgroup samples (distinct from a sampled PSS max).
+
+    A quota-free cgroup still exposes `memory.peak`; that is a true peak, not a sampling
+    maximum. This metric is NOT PSS (it includes page cache/guest usage) and never
+    substitutes the PSS contract.
+    """
+    peaks=[s['memory_peak_bytes'] for s in samples
+           if s.get('status')=='valid' and isinstance(s.get('memory_peak_bytes'),int)
+           and not isinstance(s.get('memory_peak_bytes'),bool)]
+    domains=sorted({s['clock_domain'] for s in samples if s.get('status')=='valid' and s.get('clock_domain')})
+    return {'formula_version':'cgroup_peak.v1','status':'valid' if peaks else 'unavailable',
+            'true_peak_bytes':max(peaks) if peaks else None,'sample_count':len(peaks),
+            'clock_domains':domains}
+
+
+def cgroup_cpu_seconds(samples):
+    """Exact cumulative CPU seconds per cgroup identity (last - first); no sampling error.
+
+    Distinct from the sampled per-process CPU peak: this is the true integral over the
+    window for each quota-free cgroup identity.
+    """
+    import json as _json
+    per={}
+    for sample in samples:
+        if sample.get('status')!='valid' or not isinstance(sample.get('cpu_seconds'),(int,float)):
+            continue
+        key=_json.dumps(sample.get('identity'),sort_keys=True,separators=(',',':'))
+        low,high=per.get(key,(None,None))
+        value=sample['cpu_seconds']
+        per[key]=(value if low is None else min(low,value), value if high is None else max(high,value))
+    total=sum(high-low for low,high in per.values() if low is not None)
+    return {'formula_version':'cgroup_cpu.v1','status':'valid' if per else 'unavailable',
+            'cpu_seconds':total if per else None,'identities':len(per)}

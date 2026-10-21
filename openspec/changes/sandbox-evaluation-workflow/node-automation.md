@@ -101,7 +101,8 @@ W0–W8 是早期概览别名，分别覆盖 N00/N01、N02、N03、N04、N05、N
 
 | 用例模板／N05 方法 | S：可脚本化的核心 | M／H：未脚本化边界 |
 |---|---|---|
-| B01.TEMPLATE、B01.SNAPSHOT | 源核验、唯一提交、状态／日志观察、所选计时、独立功能后验 | M核验状态／日志语义；H决定主完成点和后验覆盖 |
+| B00.TEMPLATE_BUILD、B00.SNAPSHOT_BUILD | 输入产物核验、构建／捕获 job 提交与状态轮询、产物身份与大小、构建期资源、成本归集 | M核验构建语义与产物 kind；H构建范围及冷热缓存条件 |
+| B01.TEMPLATE、B01.SNAPSHOT.DISK、B01.SNAPSHOT.MEMORY | 来源产物 kind／启动路径核验、唯一提交、状态／日志观察、所选计时、独立功能后验 | M核验状态／日志语义与 kind 解析；H决定主完成点和后验覆盖 |
 | B02.FULL、B02.PREPARED | 镜像／产物准备、job 对账、构建／发布／启动分段、成本归集 | M设计缺失 OCI 适配；H完整／预制及共享构建条件 |
 | B03.PAUSE | 写状态标记、暂停、非唤醒观察、资源窗口、恢复后验 | M判断暂停承诺；H内存／磁盘／冻结 profile |
 | B04.MEMORY、B04.DISK | 已暂停核验、恢复、状态／事件计时、连续性和首次工作 | M分析懒加载／语义差异；H状态范围、工作集 |
@@ -165,7 +166,7 @@ S 的范围还包括状态观察频率、日志解析和关联去重、PSS完整
 | proposal.md | 已确认的逐节点 S/M/H 需求、实现状态边界、未决问题 |
 | specs/evaluation-workflow/spec.md | R/G/T/A/F 与公共协议、模型／人工升级、持久恢复 |
 | specs/environment-readiness/spec.md | E1/E2/C1/C2/C3 及报告／观测就绪 |
-| specs/runtime-evaluation/spec.md | N00–N10、B01–B10、E01–E06、确定性采集计算 |
+| specs/runtime-evaluation/spec.md | N00–N10、B00–B10、E01–E06、确定性采集计算 |
 | design.md | 节点责任映射、内部图入口、路由不调用模型 |
 | orchestration-design.md | 节点到代码 handler、身份与状态、持久任务、外部操作、资源与上下文协议；工程提案不当已实现 |
 | orchestration-test-design.md | 编排工程的测试合同、故障夹具、需求／节点追溯；与沙箱性能用例分开 |

@@ -8,7 +8,7 @@
 
 源码版本和官方方法索引见 [跨候选审计](../../../docs/source-audit/alignment.md)，产品细节见 [CubeSandbox](../../../docs/source-audit/cubesandbox.md)、[Kuasar](../../../docs/source-audit/kuasar.md)、[AgentENV](../../../docs/source-audit/agentenv.md)。以下是测试设计，源码支持不等于目标环境已经验证。
 
-覆盖 B01–B10 全部基础场景及 E01–E06 低优先级扩展。扩展仅定义节点骨架、输入和验收；未审计的产品适配保持待验证，不自动纳入基础计划。
+覆盖 B00–B10 全部基础场景及 E01–E06 低优先级扩展。扩展仅定义节点骨架、输入和验收；未审计的产品适配保持待验证，不自动纳入基础计划。
 
 **用户本轮修正：创建完成不强制以命令成功为唯一判据。** API 返回、状态就绪、内部完成事件、命令完成分别建模。可以用经源码核验的状态判定创建完成；日志可提供独立的内部耗时。命令功能检查可以在创建停表后执行，首次命令耗时可以另选。此前审计中的“统一主指标必须到 exec”是早期方案，本文与更新后的 RT-22 优先。
 
@@ -158,8 +158,11 @@ PSS 是这里指定的进程内存指标，不覆盖一切宿主内存成本；�
 | STATE_READY     | 客户端发起 → 首次查询确认本次实例达到合同状态      | 客户端观测到状态就绪的创建耗时  | 不等于精确内部状态转变时间或已执行用户命令 |
 | SERVER_TERMINAL | 经核验的服务端起点 → 完成事件／服务端 duration | 该内部边界的创建耗时和阶段诊断  | 不自动包含客户端、网络和起点之前的准入   |
 | EXEC_COMPLETE   | 客户端创建发起 → 首次标记命令完整成功          | 创建到首次有效命令的完整路径   | 不能重命名成纯创建耗时           |
+| GUEST_READY     | 创建发起 → 同机进程内就绪信号（`control_ready→ready`） | guest runtime 就绪的白盒时刻 | 白盒；早于 STATE_READY，不能与黑盒端点同列 |
 
 建议基础创建比较先使用 STATE_READY；三产品需要分别证明状态对应何种 runtime／初始化承诺，再判断是可比或条件受限。若改选 SERVER_TERMINAL 为主指标，三者必须具备等价起点和终点，不能一者内部耗时、一者轮询耗时放同列。`completion_contract`、`observation_method` 与 `validation_policy` 是不同字段：终点是什么、如何观察、功能验证放在哪里分别配置。
+
+创建入口的**拓扑与同步/异步语义是独立于端点的条件**：经管理面/ingress（router）入口在 Kuasar 同步到 running（`API_COMPLETE` 即 `STATE_READY`）；仅有数据面时 node API 异步返回 `starting`，须轮询到 running；测试器与节点同机时可注入 `--ready-fd`（`GUEST_READY`）直接取 guest runtime 就绪时刻，但它是**白盒**端点，早于状态就绪，禁止与黑盒 `STATE_READY` 并入同列。请求 router 前须先核验部署含管理面/ingress 角色与组件，否则只能走数据面入口。详见 [alignment.md §9](../../../docs/source-audit/alignment.md)、[benchmark-design.md](benchmark-design.md) BCD-13。
 
 状态查询只读且不得触发自动恢复。统一查询节奏、总 deadline、单次 timeout 和观察位置；保存每次请求的起止、状态及身份。轮询响应时间包含观察延迟；在状态单调、查询一致性等前提得到验证时才能报告最后未就绪至首次就绪的时间区间，不能机械减去半个轮询周期。稳定性复核不改写首次观察时间。
 
@@ -186,6 +189,8 @@ terminal 日志在成功返回附近打点，可能略晚于状态提交；不�
 
 Cube 创建链同步等待但 probe 和 envd init 有配置条件；AgentENV 等待 ready 后提交 Running 并发布路由。两者内部日志 duration 还没有完成等价起点审计，因此先提供 STATE_READY 路径，内部耗时标待适配，不能编造与 Kuasar 等价的日志字段。
 
+三产品创建入口同步／异步（源码核验，详见 [alignment.md §9](../../../docs/source-audit/alignment.md)）：Kuasar router `internal/router/router.go` L339 `handleCreate`→L360 `routeLinkReserve`→L378 201，registry `internal/registry/registry.go` L469 `reserveCreate`→L1485 `waitReserveCall` park（默认 30s，L197–210）直到 L1140 `applyRoute` 收到 `StateRunning`（L1111 忽略 `StateStarting`）——**router 同步到 running**；Kuasar 数据面 `internal/orch/create.go` L196 `StateStarting` 后 `acceptFreshLaunch`（orch.go L282）即返回——**node API 异步**；Cube（CubeMaster 阻塞到 Cubelet 建好含 probe）与 AgentENV（orchestrator 注释 "only returns after fully ready"，`service.rs` L421）**同步**。Kuasar `--ready-fd` 由 `internal/sandboxproc/start.go` L45 注入、`sandboxer/cmd/sandbox-ctl/readiness.go` 写 `control_ready/ready`，读取端为 node 自身 `internal/configsock/readiness.go`，不对外暴露，不能经 HTTP 注入。
+
 ```mermaid
 flowchart TD
     C0["创建前置已就绪"] --> C1["唯一提交并记录 operation"]
@@ -207,18 +212,34 @@ flowchart TD
 
 选 EXEC_COMPLETE 时 C4 直接进入必要就绪等待和命令执行，成功后才关闭该方法计时和并发槽，不能先等待命令完成再执行命令；选 STATE_READY 时 C5 关闭创建计时，后验不挤占创建并发槽。后验仍会占用环境资源：纯创建实验采用批后验证或单列验证批次，流式后验必须标注干扰和预算，三候选一致。
 
-## 4. B01–B02：创建节点
+## 4. B00–B02：来源产物构建与创建节点
+
+### B00 构建来源产物
+
+来源产物构建是与创建分开的独立场景：衡量构建产物本身的一次性成本，不创建待测实例。
+
+| 用例模板 | 测量节点链 | 完成判据 | 输出 |
+| --- | --- | --- | --- |
+| B00.TEMPLATE_BUILD | VERIFY_INPUT_ARTIFACT → BUILD_SUBMIT → WAIT_BUILD_TERMINAL | 构建作业 ready／error；产物 ID 持久化 | 构建提交→就绪时延 P50/P95、构建吞吐、构建期 CPU／内存峰值、产物大小与新增存储、冷／热缓存分列 |
+| B00.SNAPSHOT_BUILD | VERIFY_INPUT_ARTIFACT → BUILD_SUBMIT → WAIT_BUILD_TERMINAL | 快照产物 ready／error | 同上；标明与 B08 从运行源捕获的边界 |
+
+边界：B00 的构建成本只计一次，不计入 B01／B02 创建时延；B02.FULL 的镜像准备阶段若与 B00 重复，须按 `B02.FULL` 或 `B00` 其中之一归属并在合同中声明；B08 从运行实例捕获快照属不同方法，不并入 B00.SNAPSHOT_BUILD。
+
+候选映射：Cube `POST /templates` → build job（building/ready/error）；Kuasar `POST /v3/templates` → `POST /v2/templates/{tid}/builds/{bid}`(fromImage) → status ready 取持久 `e2b-img`；AgentENV 跑 `template_builder` sandbox 再 `publish_captured` 产新 SnapshotId。三者构建路径未适配时 B00 标待适配。
 
 ### B01 从模板／快照创建
 
-| 用例模板         | 测量节点链                                                | 输入与断言                                       | 输出                                        |
-| ------------ | ---------------------------------------------------- | ------------------------------------------- | ----------------------------------------- |
-| B01.TEMPLATE | CREATE_SUBMIT → WAIT_SELECTED_COMPLETION → POSTCHECK | 固定模板 digest、来源内容与有效规格；新实例 ID；按选定状态／事件逐实例判成功 | API、状态、内部日志和可选命令耗时分别输出；相应吞吐、失败、阶段峰值及创建后稳态 |
-| B01.SNAPSHOT | 同上，绑定快照内容合同                                          | 区分磁盘／内存快照；预置文件 hash、内存标记及应用版本；必要状态继承检查停表后执行 | 同上，另列快照读取量、共享／懒加载和状态继承证据                  |
+创建方法的身份由**来源产物 kind × 启动路径**决定，不由接口参数名称决定。同一候选把多条路径都命名为“模板”时，必须按实际 kind 与启动路径拆开，不得合并为单一方法身份。
 
-公共参数：N、C 或 λ、总操作数或测量窗口、warmup、缓存、预创建池、存储位置、规格、TTL。缓存冷热是来源各层的属性，不是仅凭“第一次请求”命名。模板／快照制作成本不计入 B01，但关联准备产物。
+| 用例模板 | 测量节点链 | 输入与断言 | 输出 |
+| --- | --- | --- | --- |
+| B01.TEMPLATE | CREATE_SUBMIT → WAIT_SELECTED_COMPLETION → POSTCHECK | 固定 `artifact_kind`（IMAGE_ARTIFACT／SANDBOX_ARTIFACT／SNAPSHOT_MANIFEST）与 digest，并记录解析出的启动路径（冷启／内存）；请求显式规格；新实例 ID；按选定状态／事件逐实例判成功 | API、状态、内部日志和可选命令耗时分别输出；相应吞吐、失败、阶段峰值及创建后稳态；带 `artifact_kind` 与 launch path 标签 |
+| B01.SNAPSHOT.DISK | 同上，绑定磁盘快照内容合同 | 启动路径=磁盘冷恢复；预置文件 hash、应用版本；允许进程重启但不声称内存连续 | 同上，另列快照读取量、共享／懒加载与磁盘状态继承证据 |
+| B01.SNAPSHOT.MEMORY | 同上，绑定内存快照内容合同 | 启动路径=内存恢复；进程内 token 与内存内容连续、文件 hash 正确 | 同上，另列内存继承证据与恢复期峰值 |
 
-候选映射：Cube 公共模板 create；AgentENV 模板 create，规格继承快照；Kuasar 对应真实来源 ref，快照 `e2b-snp`，201 后继续等待选定完成证据。不能给 AgentENV 未定义的顶层资源字段或 Kuasar 被忽略的 cpuCount/memoryMB 后假设规格已覆盖。源码入口见三份审计及第 3 节。
+公共参数：N、C 或 λ、总操作数或测量窗口、warmup、缓存、预创建池、存储位置、规格、TTL。缓存冷热是来源各层的属性，不是仅凭“第一次请求”命名。模板／快照制作成本不计入 B01，但关联准备产物（B00）。
+
+候选映射：Cube 公共模板 create（模板与快照同命名空间，均以 `template_id` 创建，须按实际产物 kind 归类）；AgentENV “模板 create” 实际为 snapshot 恢复，规格继承快照，不得当作模板来源；Kuasar 同一“模板”按 kind 分 `img`(冷启)/`sbx`(冷启)/`snp`(内存恢复) 三条路径，201 后继续等待选定完成证据。不能给 AgentENV 未定义的顶层资源字段或 Kuasar 被忽略的 cpuCount/memoryMB 后假设规格已覆盖。源码入口见三份审计及第 3 节。
 
 失败与重入：未拿到 ID 先对账；拿到 ID 不重复创建；历史已有实例只能用于恢复观察／后验，不能凭恢复后的当前时间补造原始创建时延。缺失起点使该时延无效，原始创建事实仍保留。
 
@@ -518,7 +539,7 @@ flowchart TD
 
 ## 8. E01–E06 低优先级节点
 
-下面均为可选节点合同；具体产品适配未完成源码审计，`capability_status=unverified`，不推断支持或不支持。它们复用 N00–N10，但不成为 B01–B10 的默认依赖。
+下面均为可选节点合同；具体产品适配未完成源码审计，`capability_status=unverified`，不推断支持或不支持。它们复用 N00–N10，但不成为 B00–B10 的默认依赖。
 
 | 场景／用例模板          | 测量节点链                                                                          | 统一条件与断言                                                   | 主要指标和恢复                                     |
 | ---------------- | ------------------------------------------------------------------------------ | --------------------------------------------------------- | ------------------------------------------- |
@@ -535,6 +556,9 @@ E04/E06 的动作必须处于本轮明确范围和预算内。不能因基础失
 
 | 已审计官方方法                                 | 对应统一节点                               | 保留内容及对三候选的迁移方式                                             |
 | --------------------------------------- | ------------------------------------ | ---------------------------------------------------------- |
+| Cube `POST /templates` build job           | B00.TEMPLATE_BUILD                   | 保留构建 job 的 building/ready/error 与 `tpl-` 产物；构建成本不计入创建时延        |
+| Kuasar builder 注册／触发／status               | B00.TEMPLATE_BUILD                   | 保留 fromImage→持久 `e2b-img` templateID；与 B02.FULL 镜像准备边界须声明        |
+| AgentENV `template_builder` + publish   | B00.SNAPSHOT_BUILD                   | 构建模板即跑 builder sandbox 再 publish；与 B08 运行源捕获分列                  |
 | Cube HTTP 响应头创建／删除                      | B01、B02、B06                          | 原 headers 耗时单列，补 body 与状态终点；三者均可记录客户端事件                    |
 | Cube 并发创建、暂停／恢复                         | B01、B03、B04                          | 保留批次 wall 与摊销视图，新增逐操作事件，不从摊销反推分位数                          |
 | Cube SDK clone、dirty 快照                 | B05.FULL/PREPARED、B08                | 捕获／发布／fan-out 分段，移植真实触页和内容检查；源副作用分组                        |
@@ -589,4 +613,4 @@ T0 绑定源码和方法；RP/T1 将场景选择展开为本文用例模板及�
 
 ## 执行代码与代码契约入口
 
-本节点的执行模块、算法及恢复合同见 [benchmark-design.md](benchmark-design.md)；测试这些代码的独立断言、夹具与工程测试见 [benchmark-contract-design.md](benchmark-contract-design.md)，任务见 [tasks.md](tasks.md) 15–26组。运行时参数缺失只阻塞对应真实用例，不阻止严格合同和算法实现。Kuasar B02.FULL 已补查公共builder路径（BCD-05）；目标部署可用性及实际适配另行验收。
+本节点的执行模块、算法及恢复合同见 [benchmark-design.md](benchmark-design.md)；测试这些代码的独立断言、夹具与工程测试见 [benchmark-contract-design.md](benchmark-contract-design.md)，任务见 [tasks.md](tasks.md) 15–27组。运行时参数缺失只阻塞对应真实用例，不阻止严格合同和算法实现。Kuasar B02.FULL 已补查公共builder路径（BCD-05）；目标部署可用性及实际适配另行验收。

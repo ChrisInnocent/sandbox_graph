@@ -66,10 +66,11 @@ class SchedulingService:
                 if gaps:
                     tx.put('coverage',f'{run_id}:{plan_ref}:{case.case_id}',{'scope':group_id,'run_id':run_id,'plan_ref':plan_ref,'case_id':case.case_id,'status':'unsupported' if case.capability=='unsupported' else 'blocked','gaps':[g.model_dump(mode='json') for g in gaps]},immutable=True)
                     continue
+                from ..planning.identity import binding_payload, condition_identity
                 for condition in case.conditions:
-                    key=WorkKey(group_id=group_id,scenario_id=case.scenario_id,method_id=case.method_id,method_version=case.method_version,condition_hash=canonical_hash(condition),repeat_id=case.repeat_id)
+                    key=WorkKey(group_id=group_id,scenario_id=case.scenario_id,method_id=case.method_id,method_version=case.method_version,condition_hash=canonical_hash(condition_identity(case,condition)),repeat_id=case.repeat_id)
                     identity=f'{run_id}:{plan_ref}:{key.identity}'
-                    body={'work_id':identity,'key':key.model_dump(mode='json'),'run_id':run_id,'group_id':group_id,'plan_ref':plan_ref,'graph_ref':run['body']['graph_ref'],'contract_ref':case.contract_ref,'environment_ref':case.environment_ref,'condition':condition,'domains':list(case.conflict_domains),'status':'pending','queue_reason':None}
+                    body={'work_id':identity,'key':key.model_dump(mode='json'),'run_id':run_id,'group_id':group_id,'plan_ref':plan_ref,'graph_ref':run['body']['graph_ref'],'contract_ref':case.contract_ref,'environment_ref':case.environment_ref,'condition':condition,**binding_payload(case),'domains':list(case.conflict_domains),'status':'pending','queue_reason':None}
                     existing=tx.get('work_instances',identity)
                     if not existing: tx.put('work_instances',identity,body,immutable=True)
                     ids.append(identity)

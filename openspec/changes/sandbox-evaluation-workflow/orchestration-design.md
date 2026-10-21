@@ -465,6 +465,139 @@ RP 内部流程调用此协议，不新增第二个统筹 agent。准备、CAS�
 
 交付证据分成设计审阅、离线逻辑、真实图与数据库集成、故障恢复、真实 sandbox 适配五层。本文只交付第一层的设计，不借现有草稿测试宣称后四层完成。
 
+### D17. 创建端点与来源身份的图契约
+
+D17 只在图节点需要**选择或校验**创建入口拓扑与来源产物身份时生效；若图仅按 `script_id/version` 触发脚本、字段全走 `CaseContract`，D17 约束的是**字段绑定与校验收口**，不额外增加图节点或边。执行侧合同见 [benchmark-design.md](benchmark-design.md) BCD-12（来源）／BCD-13（端点），审计见 [alignment.md §8/§9](../../../docs/source-audit/alignment.md)。
+
+**责任划分（沿用 R1/T0、T2/C1、N00–N05）：**
+
+| 阶段 | 图侧职责 | 禁止 |
+|---|---|---|
+| R1/T0 方法合同 | 把来源身份（`artifact_kind × launch_path × producer_step`）与端点身份（`topology × endpoint_kind`）登记为方法身份维度，写入 catalog/registry 与 method_id | 按接口参数名称推断 kind／path／同步性 |
+| T2/C1 用例准备 | 只读探测并记录 `management_plane_present`（管理面/ingress 角色是否存在）与 `readiness_signal`；写入 case 与 `condition_hash` | 未核验即假定 router 可用；触发任何创建／构建副作用 |
+| N00 preflight | 校验来源与端点合同自洽（`co_located_cli ⇒ ready_fd ∧ guest_ready`；远端拓扑禁 `ready_fd`）；不一致→`blocked` | 静默回退到其它拓扑或按名称补默认值 |
+| N05/M 执行 | 按 `endpoint_kind` 决定是否轮询；`guest_ready` 单列；分子分母同端点 | 把受理当完成；把 `guest_ready` 与 `state_ready` 并入同一分布 |
+| N08/T8/A3 分析 | 以端点与来源作为可比性键；不同键不得合并 | 用异端点样本算同一分位数 |
+
+**GraphState／账本字段：**
+
+- `Plan.cases[]` 与 `CaseContract` 对齐，携带 `artifact_kind`／`launch_path`／`producer_step`／`cost_scope`／`topology`／`endpoint_kind`／`readiness_signal`／`endpoint_ref`。
+- 来源身份与端点身份进入 `WorkKey.method_id` 与 `condition_hash`，使不同 kind／path／topology／endpoint 天然分属不同工作实例，不靠事后标签区分。
+- `EvidenceRef.scope` 与分析 `comparison` 规则显式含端点与来源键；`guest_ready` 白盒样本的 `scope` 标白盒，不得进入黑盒比较集合。
+- 探测与解析结果（`management_plane_present`、`path_evidence`、`resolution_status`）作为证据引用保存，不得只留在模型上下文。
+
+**不变量（与 orchestration-test-design I13/I14 对齐）：**
+
+- I13 同一 `WorkKey`／比较键不含混端点；`guest_ready`（白盒）与 `state_ready`（黑盒）不合并。
+- I14 声明管理面入口但 `management_plane_present=false` → `blocked`，不静默回退；未解析的来源／端点不得被默认值或名称填充。
+
+**与其它决策的关系：** D08 选测编译把来源与端点作为条件轴，不能把它们降为脚本内部隐式默认；D11 RunnerGateway 提交时携带 `endpoint_ref` 与来源身份，重入沿用同一身份；D14 图版本变更须保持来源／端点身份的兼容与复用判定。
+
+```mermaid
+flowchart TD
+    M["R1/T0 方法与来源/端点身份登记"] --> P["T2/C1 只读探测<br/>management_plane_present / readiness_signal"]
+    P --> V{"N00 preflight 自洽？"}
+    V -->|不一致或未解析| B["blocked（不静默回退、不猜）"]
+    V -->|自洽| R{"topology"}
+    R -->|router/node_direct 且同步| S["N05 按 script_id 触发<br/>api_complete ≈ state_ready"]
+    R -->|node_direct 异步| A["N05 触发后轮询至 running<br/>api_complete_s 与 state_ready_s 分列"]
+    R -->|co_located_cli| G["N05 触发并读 ready_fd<br/>guest_ready 白盒，单列"]
+    S --> AN["N08/T8 以端点+来源为可比性键"]
+    A --> AN
+    G --> WB["白盒 scope，禁入黑盒比较"]
+    AN --> OUT
+    WB --> OUT["交付与增量分析"]
+    B --> OUT
+```
+
+### D18. 薄模块细化：状态、事件/任务、fencing、观测、closure、ImpactPlan
+
+组 1–14 的四个薄模块已实现设计核心但缺验收与边界。本节把它们的不变量与边界写死，作为离线验收（TDD）的依据；不新增图节点，只细化 D06／D09／D10／D11／D13／D14。
+
+#### D18.1 分离状态转换（细化 D06）
+
+`domain/transitions.py` 只负责 `execution_status` 的合法迁移与 CAS：
+
+- 终态（`succeeded`/`failed`/`cancelled`）**不可复活**，非法迁移必须要求“新 attempt”，不能原地改。
+- `transition(current, event, expected_revision, revision)` 在 revision != expected 时抛 `VERSION_CONFLICT`；不吞掉并发写。
+- 分离维度（`data_status`/`review_status`/`performance_status`/`cleanup_status`/`coverage_status`）**不因 execution 成功而自动变化**；性能 `fail` 不触发重试。
+- `merge_revision` 同版本同摘要幂等、同版本不同内容报冲突、低版本不覆盖当前。
+- `retry_allowed` 只对 `TRANSIENT_READ` 且有剩余预算、未过 deadline 才真；`performance_status=fail` 永远不重试。
+- 离线验收：ORC-016/017/018/019/050/051。
+
+#### D18.2 事件与持久任务（细化 D09）
+
+`runtime/events.py`、`runtime/tasks.py`：
+
+- 事件按 `(aggregate_id, aggregate_seq)` 唯一；同 seq 同内容幂等、同 seq 不同内容报冲突；`event_id` 与内容 hash 绑定，禁止同 id 改内容。
+- `consume` 只沿 cursor 连续推进，**缺 seq 不跳过**；生产者 scope 不在 allowlist 时抛 `PermissionError`，不消费。
+- 任务 `enqueue_in` 以 `dedupe_key` 去重：同 key 同输入返回原 job_id，同 key 不同输入报冲突；job_id 已存在但非同 dedupe 报冲突。
+- `claim` 只领 `pending`/过期租约、未过 deadline 且未超 attempt 的任务；超预算/超期标 `failed` 而不静默丢弃；派发被 supersede 的普通任务标 `superseded` 且发终态事件，`cleanup/reconcile/analysis/report` 不受 gate 关闭影响。
+- `renew_claim`/`finish` 用 `owner_epoch` fencing；过期或 epoch 变更抛 `StaleOwner`；`finish` 重复调用同结果幂等、异结果报冲突。
+- 离线验收：ORC-030、033、037–040。
+
+#### D18.3 租约与 fencing（细化 D10）
+
+`runtime/leases.py`、`persistence/checkpointer.py`：
+
+- 资源域按 `sorted(set(domains))` 规范化后**原子领取**：任一域被他人占用/隔离则整批失败，不留部分锁。
+- 资源释放必须先证明资源闭包（`closed`），且引用 operation 均已 `terminal` 且 `completed`；否则拒绝。
+- `quarantine` 只能隔离本 scope 的域；隔离域不因租约到期自动释放，须显式对账闭合。
+- 线程租约与 saver 的 checkpoint/pending writes **同一 lease 行**做 CAS，禁止独立连接先查后写（真实 PG 验收，离线只测接口顺序与拒绝路径）。
+- 离线验收：ORC-033、035、036（真实双连接留 blocked）。
+
+#### D18.4 观测协议（细化 D11）
+
+`runtime/observation.py`：
+
+- 观测身份 = `(session_id, scope, operation_id, deadline)`；身份变更报冲突，不静默重绑。
+- 样本按 `seq` 连续；`append` 要求观测仍在 running 且未过 deadline，**跨进程 clock_epoch 的样本拒绝**（不得拼成连续稳态）。
+- `restart` 要求新的 `clock_epoch`，并把该段标 `interrupted`；重复 epoch 报冲突。
+- `stop(last_seq)`：若已停止则要求同 `last_seq`（幂等）；若存在 `seq > last_seq` 的已记录样本则拒绝截断；`missing_sequences` 非空或 `interrupted` 时 `data_status=insufficient`，**绝不写零**。
+- 离线验收：ORC-025、042、062。
+
+#### D18.5 closure CAS 与 partial 归档（细化 D13）
+
+`services/closure.py`：
+
+- `classify_scope`：无最终处置或仍在运行 → `open`；`fulfilled` 但数据非 valid、或清理未完成/未知 → `partial`；否则 `complete`。
+- `seal_archive` 前置：有在途（job/operation/lease/测量）即拒绝；`analysis_ref` 必须与 report/Excel 一致；存在 `open` scope 拒绝。
+- `uncertain` operation 只有在对应域已 `quarantine` 且该 scope 已 `partial` 时才允许部分归档；否则拒绝。
+- 归档写入受 `expected_revision`（closure_revision CAS）与 `expected_plan_ref` 约束；plan 变更拒绝，不把旧计划归档当当前版。
+- 离线验收：ORC-040、049、050、058。
+
+#### D18.6 ImpactPlan 与兼容复用（细化 D14）
+
+`planning/changes.py`：
+
+- 分类互斥且确定：纯措辞 → 仅报告；版式 → A7+F；阈值/规则 → 重算（不重测）；**完成事件变更**只有在事件已在可用集合时才免重测，否则重测；规格/契约变更 → 全部节点重测。
+- 身份字段（`artifact_kind`/`launch_path`/`producer_step`/`cost_scope`/`topology`/`endpoint_kind`/`readiness_signal`/`endpoint_ref`）任一变更 → 强制新测量，不复用旧结果（D17）。
+- 未知/混合变更保守回退到“测量合约变更”；不得把未覆盖组合静默当可复用。
+- 离线验收：ORC-054、055、056f。
+
+#### D18.7 可观测性追踪（细化 D16）
+
+`runtime/observability.py` 提供控制面结构化追踪，与沙箱吞吐**分开**：
+
+- `TraceEvent` 必带 `run_ref`/`plan_ref`/`graph_ref`/`scope`/`node_id`/`attempt_id`/`owner_epoch` 与 `trace_ref`；阶段 `phase ∈ {queue,script,wait,reconcile,analysis,model}`。
+- 阶段耗时 = `ended_at - started_at`（同单调时钟）；负时长拒绝；每条追踪自身幂等（同身份同内容）。
+- `usage_status ∈ {known,unknown}`；缺失 token 用量记 `unknown`，**绝不补零/编造**。
+- 复用计数从 `work_instances.reuse_from` 统计；调度指标不得混入沙箱吞吐。
+- 秘密只以引用出现（非内联）；原始日志以 `log_ref` 存储，禁止内联原文。
+- `summary(run_ref)` 汇总阶段耗时、usage known/unknown 计数与复用数；缺测有字段而非静默。
+- 离线验收：ORC-021、023、069。
+
+### D19. 测试间环境还原的图编排契约
+
+N09 与运行级 cleanup 在按账本逐资源清理后，SHALL 执行**运行归属扫描**（`sandbox_bench.restore.restore_environment`）：`run_id = case.work_id`，小批量多轮，删后重列核验残留。规格见 `evaluation-workflow` WF-37 与 `runtime-evaluation` RT-43，脚本详设见 [benchmark-design.md](benchmark-design.md) BCD-14。
+
+- **分工**：逐资源清理覆盖账本内已登记资源（含 source/consumer）；扫描按归属标签枚举并删除未入账的孤儿实例，并核验无残留。二者结果**并集**进入 `cleanup_status`。
+- **基线**：N04 前置捕获 `baseline_ids`（测试前同 run_id 的预存在实例），扫描排除之；预热／空闲因不带 run_id 自然不在列表。
+- **残留与失败**：扫描后仍有本轮归属实例，或单次删除失败，则 `cleanup_status=incomplete`；`ClosureService.classify_scope` 据此判 `partial`，归档保留残留身份与恢复入口，不得声明清理完成。
+- **接口**：扫描由 N09 与运行级 cleanup 触发，路径为 `RecoveryJobHandler.cleanup` → `OperationService.cleanup` → `BenchGateway.cleanup` → `session._N09` → `restore_environment`（不新增 `RunnerGateway` Protocol 方法，避免破坏既有 gateway 实现）；未配置 `restore` 还原合同时扫描不执行，故创建沙箱的运行 SHALL 在环境声明中提供还原合同。
+- **与 D10 的关系**：扫描不释放租约；租约释放仍以实际清理显式完成为前提（租约到期不等于已还原）。
+- 离线验收：ORC-074／ORC-075。
+
 ## Risks / Trade-offs
 
 - 持久队列比直接调用子图多一层协议 → 换取组间独立恢复和增量分析；用同一任务后端接口限制复杂度。

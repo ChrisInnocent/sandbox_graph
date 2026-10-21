@@ -14,10 +14,14 @@
 | 增删改测试、节点、环境或计算方法 | [维护指南](docs/maintenance.md) |
 | 查看设计中的节点、子流程及自动化边界 | [节点工作流](openspec/changes/sandbox-evaluation-workflow/node-workflows.md)、[节点自动化职责](openspec/changes/sandbox-evaluation-workflow/node-automation.md) |
 | 判断当前哪些已实现、哪些尚未验收 | [交付记录与缺口](docs/verification/README.md)、[任务清单](openspec/changes/sandbox-evaluation-workflow/tasks.md) |
+| 在真实 PostgreSQL / 三产品 / 特权机验收 | [真实环境验收操作手册](docs/acceptance-manual.md) |
+| 查可选指标与可调背景条件、逐场景规格 | [逐场景详细规格](openspec/changes/sandbox-evaluation-workflow/scenario-spec.md)（指标目录 RT-44/BCD-15、条件矩阵 RT-45/BCD-16） |
+| 审阅编排图引擎差距与覆盖 | [差距清单](docs/orchestration/gap-analysis.md)、[ORC 覆盖账本](docs/orchestration/orc-coverage.md)、[来源语义审计](docs/source-audit/alignment.md) |
 
 ## 当前可用范围
 
 - **单用例执行**：`sandbox_bench.runner case` 接入真实环境配置，执行、校验和封存证据；`verify`、`recompute` 用于离线复核。需要部署证据、来源和对应能力，方法出现在目录中不等于该部署已验证支持。
+- **CLI 子命令**：`run`／`cleanup`（配置驱动发压／清理）、`case`（单用例 N00–N10）、`verify`／`recompute`（离线复核）、`resolve`／`build`（来源只读解析／B00 构建）、`endpoint`（创建端点拓扑解析）、`topology`（拓扑→声明组件清单）、`restore`（测试间环境还原）、`scenario`（指标/条件选择与背景条件校验）。退出码：`0` 成功；`2` blocked／incomplete／unverified；`1` 异常。
 - **完整编排组件**：已有五类 LangGraph、选择器、持久状态与 Worker 接口。正式运行需要 PostgreSQL 和实际环境服务装配，当前没有一条 `sandbox_graph start` 命令可自动部署并运行全部环境。
 - **验证边界**：已有本地协议、计算和恢复测试；尚无三产品真实性能结果。具体安装配置脚本、部分方法和故障验收仍未交付，详见上述缺口文档。
 
@@ -104,6 +108,24 @@ python3 -m venv .venv
 
 正式启动使用 `RunService.preview/start`、PostgreSQL、注册服务和 Worker，按部署文档完成装配。单机执行账本使用文件锁和持久提交意图；正式多 worker 编排使用 PostgreSQL，二者不混为已验证的同一后端。
 
+### 5. 环境还原与指标/条件选择
+
+- **测试间环境还原**：删除只按本轮 `metadata.run_id` 归属，**小批量多轮**、删后核验残留，并排除预热／空闲／基线实例（Kuasar 预启动 runner 单元、Cube TAP/cgroup 池、AgentENV 设备池；审计见 [alignment §10](docs/source-audit/alignment.md)）：
+
+  ```bash
+  .venv/bin/python -m sandbox_bench.runner restore --config environment.yaml --output restore.json
+  ```
+
+  配置 `restore: {batch_size, batch_gap_s, max_rounds}`；残留非空为 `incomplete`，不报告为完成。
+- **指标/条件选择**：每个场景的**需测指标（R）／可测（O）**与**需声明条件（R）／可选（O）**见 [逐场景详细规格](openspec/changes/sandbox-evaluation-workflow/scenario-spec.md)。用例经 `declared_metrics`／`declared_conditions`／`background` 声明后校验：
+
+  ```bash
+  .venv/bin/python -m sandbox_bench.runner scenario --case case.yaml --output scenario.json
+  ```
+
+  缺 R 项为合同错误；O 未选标 `not_selected`；不默认笛卡尔积。
+- **真实环境**：PostgreSQL／三产品／特权机的逐项先决条件、命令与验收判据见 [真实环境验收操作手册](docs/acceptance-manual.md)。
+
 ## 交给智能体的提示词
 
 在 OpenCode 或其他具备仓库读写、终端执行能力的智能体中，可以从下面开始；具体工具和 skill 以你本机安装情况为准：
@@ -115,7 +137,7 @@ python3 -m venv .venv
 先运行本地验证，区分已实现、合成测试通过和真实环境验证通过。
 检查已有环境记录，只向我询问缺失的连接、版本、角色、来源、规格和执行范围信息。
 先选择一个已核验支持的创建用例，建议 B01.TEMPLATE / STATE_READY / Q=3 / 并发1。
-用真实证据生成配置，调用已有 case、verify、recompute 入口。
+用真实证据生成配置，按需调用 resolve、build、endpoint、topology、restore、scenario 与 case、verify、recompute 入口；每场景的**需测指标/需声明条件**以 scenario-spec.md 为准。
 缺少适配或部署证据时说明具体阻塞；不要编造 evidence_ref、测量值或安装成功记录。
 未知提交先对账，清理仅限本次明确拥有的资源；需要安装或扩大负载时先列出具体变更范围。
 将配置引用、状态、产物路径、问题和下一步落盘，不用对话记忆替代运行账本。
@@ -146,5 +168,9 @@ python3 -m venv .venv
 - [需求覆盖及未交付项](docs/orchestration/requirement-coverage.md)
 - [实施与验证记录](docs/orchestration/progress.md)
 - [最终回归证据和剩余缺口](docs/verification/README.md)
+- [真实环境验收操作手册](docs/acceptance-manual.md)
+- [逐场景详细规格（指标 × 条件）](openspec/changes/sandbox-evaluation-workflow/scenario-spec.md)
+- [编排图引擎差距清单](docs/orchestration/gap-analysis.md)、[ORC 覆盖账本](docs/orchestration/orc-coverage.md)
+- [三产品来源语义与创建端点审计](docs/source-audit/alignment.md)
 
 当前代码包含本地受控协议、公式和恢复测试。真实三产品性能、Linux 采集权限与 PostgreSQL 多进程故障验收需要对应环境；测试通过不等于候选产品性能已验证。缺口保留在任务清单中，change 不自动归档。

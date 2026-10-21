@@ -46,9 +46,13 @@ class WorkflowHandlers:
             if not row or row['body']['graph_ref']!=context.graph_ref: return blocked('VERSION_CONFLICT','original run definition required')
         return NodeResult(execution_status='succeeded',output={'run_ref':context.run_ref})
     async def validate_catalog(self,context):
+        from ..planning.identity import missing_required_identity
         plan=self._plan(context)
         missing=[c.case_id for c in plan.cases if not c.method_id or not c.scenario_id]
-        return blocked('INPUT_MISSING',str(missing)) if missing else NodeResult(execution_status='succeeded',output={'catalog_ref':plan.catalog_hash})
+        if missing: return blocked('INPUT_MISSING',str(missing))
+        identity_missing={c.case_id:list(missing_required_identity(c)) for c in plan.cases if missing_required_identity(c)}
+        if identity_missing: return blocked('SOURCE_IDENTITY_MISSING',str(identity_missing))
+        return NodeResult(execution_status='succeeded',output={'catalog_ref':plan.catalog_hash})
     async def restore_plan(self,context):
         plan=self._plan(context)
         if plan.status!='ready': return blocked('INPUT_MISSING',f'plan status={plan.status}')

@@ -1,5 +1,7 @@
 # 编排启动与验证
 
+> 真实 PostgreSQL／三产品／特权机的逐项验收步骤见 [acceptance-manual.md](../acceptance-manual.md)。本文件只说明启动、依赖与最小验证。
+
 本目录交付的是部分可执行控制面，不是主变更完成声明。运行结果、未完成工作和数据库验收边界见 [implementation-report.md](implementation-report.md)。公共接口见 [contracts.md](contracts.md)。
 
 本机已导入并执行的版本：Python 3.14.7（HarmonyOS），LangGraph 1.2.16，langgraph-checkpoint 4.3.0，langgraph-checkpoint-postgres 3.2.0，psycopg 3.3.6，Pydantic 2.14.1，pytest 9.1.1。版本安装与根锁文件由项目统一维护。尚未建立 Linux/Python 多版本 CI 矩阵。正式数据库目标 PostgreSQL 16+；没有服务端连接证据，不能将该目标写成已验证支持范围。

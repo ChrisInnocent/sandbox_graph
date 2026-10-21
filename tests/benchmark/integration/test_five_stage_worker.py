@@ -59,7 +59,7 @@ async def test_two_groups_flow_through_worker_real_sessions_and_partial_archive(
                 'effective_spec':body['spec'],'evidence_ref':'synthetic-source'},
             'environment_evidence':{'ref':body['environment_ref'],'product_version':body['product_version'],'evidence_kind':'synthetic'}}
         templates[group]={'case':body,'config':config}
-        cases.append(Case(capability='supported',adapter_verified=True,case_id=group,group_id=group,sandbox_type='kuasar',scenario_id='B01',method_id='B01.TEMPLATE',priority='base',conditions=({'case_template_ref':group},),conflict_domains=('host:'+group,),contract_ref='contracthash',environment_ref=body['environment_ref']))
+        cases.append(Case(capability='supported',adapter_verified=True,case_id=group,group_id=group,sandbox_type='kuasar',scenario_id='B01',method_id='B01.TEMPLATE',priority='base',conditions=({'case_template_ref':group},),conflict_domains=('host:'+group,),contract_ref='contracthash',environment_ref=body['environment_ref'],artifact_kind='sandbox_artifact',launch_path='cold_boot',producer_step='pre_existing'))
     def session_factory(case,config,folder):
         scenario=Scenario() if case.group_id=='G_A' else FailedScenario();scenarios[case.group_id]=scenario
         return BenchSession(case,config,folder,scenario=scenario)

@@ -1,6 +1,6 @@
 """Finite plan compiler: preview is pure and never dispatches work."""
 from typing import Any, Literal
-from pydantic import Field
+from pydantic import Field, model_validator
 from ..domain.models import Model, canonical_hash
 
 
@@ -10,6 +10,8 @@ class Selection(Model):
     scenarios: tuple[str, ...] | None = None
     methods: tuple[str, ...] | None = None
     priorities: tuple[str, ...] | None = None
+    topologies: tuple[str, ...] | None = None
+    artifact_kinds: tuple[str, ...] | None = None
     exclude: tuple[str, ...] = ()
     stage: Literal['all', 'check', 'analysis', 'report'] = 'all'
 
@@ -30,6 +32,33 @@ class Case(Model):
     conflict_domains: tuple[str, ...] = ()
     contract_ref: str = ''
     environment_ref: str = ''
+    # Source/endpoint identity (D17). Never inferred from the interface parameter name.
+    artifact_kind: str | None = None
+    launch_path: str | None = None
+    producer_step: str | None = None
+    cost_scope: str | None = None
+    topology: str | None = None
+    endpoint_kind: str | None = None
+    readiness_signal: str | None = None
+    endpoint_ref: str | None = None
+
+    @model_validator(mode='after')
+    def validate_identity(self):
+        if self.topology == 'co_located_cli':
+            if self.readiness_signal != 'ready_fd' or self.endpoint_kind != 'guest_ready':
+                raise ValueError('co-located cli requires ready_fd and guest_ready')
+        elif self.topology in ('router', 'node_direct'):
+            if self.readiness_signal == 'ready_fd' or self.endpoint_kind == 'guest_ready':
+                raise ValueError('remote topology cannot use ready_fd or guest_ready')
+        if self.endpoint_kind == 'guest_ready' and self.readiness_signal != 'ready_fd':
+            raise ValueError('guest_ready endpoint requires ready_fd readiness')
+        if self.method_id == 'B01.SNAPSHOT.MEMORY' and self.launch_path not in (None, 'memory_restore'):
+            raise ValueError('memory snapshot method requires memory_restore')
+        if self.method_id == 'B01.SNAPSHOT.DISK' and self.launch_path not in (None, 'disk_restore', 'cold_boot'):
+            raise ValueError('disk snapshot method requires disk or cold boot')
+        if self.method_id == 'B01.TEMPLATE' and self.artifact_kind == 'snapshot_manifest':
+            raise ValueError('template method cannot use a snapshot manifest')
+        return self
 
 
 class Gap(Model):
@@ -63,7 +92,7 @@ class PlanCompiler:
             raise ValueError('duplicate case ID')
 
     def compile(self, selection: Selection, *, authorized_groups: set[str], evidence: dict | None = None, graph_ref: str = 'default:1', contract_ref: str = '') -> Plan:
-        axes = {'groups':'group_id','sandbox_types':'sandbox_type','scenarios':'scenario_id','methods':'method_id','priorities':'priority'}
+        axes = {'groups':'group_id','sandbox_types':'sandbox_type','scenarios':'scenario_id','methods':'method_id','priorities':'priority','topologies':'topology','artifact_kinds':'artifact_kind'}
         for axis, field in axes.items():
             values = getattr(selection, axis)
             unknown = set(values or ()) - {getattr(c, field) for c in self.catalog}

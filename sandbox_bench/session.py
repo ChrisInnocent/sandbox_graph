@@ -508,6 +508,8 @@ class BenchSession:
                  'case_hash':self.case.digest(),'plan_ref':self.case.plan_ref,'contract_ref':self.case.contract_ref,
                  'environment_ref':self.case.environment_ref,'validation_policy':self.case.completion.validation_policy}
         if parents:records['parent_operations']=parents
+        inventory=getattr(self.sampler,'inventory',None)
+        if inventory:records['inventory']=inventory
         recovery_assertions,records['evidence_gaps'],records['qualification_notes']=self._recovery_evidence(report)
         samples=[json.loads(p.read_text()) for p in (self.folder/'resource_samples').glob('*.json')]
         expected_sequence=1
@@ -647,18 +649,41 @@ class BenchSession:
             rows.append({'resource_id':sid,'status':status,'physical_release':'unverified'})
         if self.source_lifecycle:
             await self.source_lifecycle.reconcile_consumers(deadline-time.monotonic())
+        # WF-37/D19: an ownership sweep catches orphans not recorded in the journal and verifies
+        # no residual. It only runs when the environment declares a restore contract.
+        sweep=None;swept=bool(self.config.get('restore'))
+        if swept:
+            from .restore import restore_environment
+            restore_config=self.config.get('restore') or {}
+            try:
+                sweep=await asyncio.to_thread(restore_environment,self.adapter,
+                    run_id=self.case.work_id,
+                    batch_size=int(restore_config.get('batch_size',5)),
+                    batch_gap_s=float(restore_config.get('batch_gap_s',0)),
+                    max_rounds=int(restore_config.get('max_rounds',100)),
+                    timeout=self.case.cleanup_timeout_s,
+                    deadline=time.monotonic()+self.case.cleanup_timeout_s,
+                    baseline_ids=tuple(restore_config.get('baseline_ids',())))
+            except Exception as exc:
+                sweep={'status':'unknown','reason':type(exc).__name__,'residual_ids':None}
+        residual_ids=list((sweep or {}).get('residual_ids') or [])
         with self.journal._transaction() as state:
             state.setdefault('cleanup',[]).extend(rows)
-            self.journal._event(state,'cleanup_observed',rows=rows)
+            self.journal._event(state,'cleanup_observed',rows=rows,restore_sweep=sweep)
         uncertain=[x for x in self.journal.state()['operations'].values()
                    if x['status'] in ('submission_started','unknown','timeout')]
         _,gaps,_=self._recovery_evidence()
         residual=[gap for gap in gaps if not gap.startswith('validation_interference:')]
         fixture_unknown=self._fixture_unknown()
         source_consumers=self.source_lifecycle.residuals() if self.source_lifecycle else []
-        return {'status':'completed' if not uncertain and not fixture_unknown and not source_consumers and not residual and all(x['status'] in ('api_deleted','api_absent','complete') for x in rows) else 'incomplete',
+        sweep_open=swept and (sweep is None or sweep.get('status')!='complete')
+        complete=(not uncertain and not fixture_unknown and not source_consumers and not residual
+                  and not residual_ids and not sweep_open
+                  and all(x['status'] in ('api_deleted','api_absent','complete') for x in rows))
+        return {'status':'completed' if complete else 'incomplete',
                 'cleanup':rows,'unknown_operations':len(uncertain),'fixture_unknown_operations':fixture_unknown,
-                'source_consumers':source_consumers,'physical_release':'unverified','gaps':residual}
+                'source_consumers':source_consumers,'physical_release':'unverified','gaps':residual,
+                'restore_sweep':sweep,'residual_ids':residual_ids}
 
     def _fixture_unknown(self):
         verifier=getattr(self,'fixture_restore',None)

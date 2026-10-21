@@ -66,6 +66,47 @@ class MemoryRepository:
 def clock(): return FakeClock()
 @pytest.fixture
 def repository(clock): return MemoryRepository(clock)
+
+
+class SpyModel:
+    """Records calls and can return over-reaching output; never mutates deterministic state."""
+    def __init__(self, payload=None):
+        self.payload = payload
+        self.calls = []
+    async def diagnose(self, context):
+        self.calls.append(context)
+        return self.payload, 0, 'spy:v1'
+
+
+@pytest.fixture
+def spy_model(): return SpyModel()
+
+
+@pytest.fixture
+def postgres():
+    """Real PostgreSQL L2 fixture; missing DSN is explicitly skipped, never passed."""
+    import os
+    from uuid import uuid4
+    import psycopg
+    from psycopg import sql
+    from psycopg.conninfo import make_conninfo
+    from psycopg.rows import dict_row
+    from langgraph.checkpoint.postgres import PostgresSaver
+    from sandbox_graph.persistence.repository import PostgresRepository
+    dsn = os.environ.get('SANDBOX_GRAPH_TEST_POSTGRES_DSN')
+    if not dsn:
+        pytest.skip('BLOCKED: SANDBOX_GRAPH_TEST_POSTGRES_DSN not provided; real PostgreSQL required')
+    namespace = 'orc_' + uuid4().hex
+    with psycopg.connect(dsn, autocommit=True) as conn:
+        conn.execute(sql.SQL('CREATE SCHEMA {}').format(sql.Identifier(namespace)))
+    scoped = make_conninfo(dsn, options=f'-c search_path={namespace}')
+    repository = PostgresRepository(scoped)
+    repository.migrate()
+    with psycopg.connect(scoped, autocommit=True, row_factory=dict_row) as conn:
+        PostgresSaver(conn).setup()
+    yield repository, scoped
+    with psycopg.connect(dsn, autocommit=True) as conn:
+        conn.execute(sql.SQL('DROP SCHEMA {} CASCADE').format(sql.Identifier(namespace)))
 @pytest.fixture
 def environments():
     return {'G_A':('host_A',),'G_B':('host_B_control','host_B_worker'),'G_C':('host_A',)}

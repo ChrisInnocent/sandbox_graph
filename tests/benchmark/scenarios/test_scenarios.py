@@ -16,7 +16,8 @@ ManualClock = fixture_module.ManualClock
 def case(method='B01.TEMPLATE', **extra):
     data = dict(schema_version='case.v1', method_id=method, method_version='1',
         product='agentenv', product_version='synthetic', work_id='work', group_id='group',
-        source={'kind':'template','id':'template','digest':'sha256:synthetic'},
+        source={'kind':'template','id':'template','digest':'sha256:synthetic',
+                'artifact_kind':'sandbox_artifact','launch_path':'cold_boot','producer_step':'pre_existing'},
         spec={'vcpus':2,'memory_bytes':2147483648},
         completion={'endpoint':'STATE_READY','timeout_s':10,'poll_interval_s':1},
         load={'mode':'WINDOW','requests':4,'concurrency':2,'run_timeout_s':20,'max_unknown_external':2},

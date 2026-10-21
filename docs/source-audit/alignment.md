@@ -192,3 +192,188 @@ B02建议新增`sandbox_bench/sources.py`管理镜像准备、Kuasar准备步骤
 8. 唯一run标签、输出目录、资源ledger、迟到创建对账能力及清理deadline；授权测试规模须具体。不能复用Cube全局env_reset清空其他资源。
 
 这些是执行依赖，不是要求重复批准已授权的源码整理或本地合同验证。在输入齐备且实现完成前，报告应保留“尚未执行/待适配/缺输入”，不生成模拟性能数字或将本地mock测试称为真实沙箱结果。
+
+## 8. 模板与快照的语义审计：来源产物与启动路径
+
+2026-10-21 补查，纯源码审计，未运行任何沙箱、构建或性能测试。
+
+**问题**：三产品都把创建参数叫 `templateID`／“模板”，但从“模板”创建与从“快照”创建是否等价？能否合并为同一个实验方法？
+
+**结论（先行）**：**不等价，不能合并为一个无条件的创建方法**。“模板”在三个产品里是三件不同的东西；决定实验身份的不是“模板”这个名字，而是**来源产物 kind** 与**解析出的启动路径**。三者都把“从模板创建”落进同一个 create 入口，但该入口内部可能是镜像冷启、portable sandbox 冷启或快照内存恢复，其前置生产动作、规格来源、源副作用和完成语义都不同。
+
+### 8.1 Kuasar：模板是“带 kind 的自描述引用”，模板 ⊇ {image, sandbox, snapshot}
+
+- `kuasar-components/orchestrator/internal/types/types.go` L43–48：`Kind` ∈ {`img`（cold boot from a portable image artifact）, `sbx`（cold boot from a portable sandbox）, `snp`（restore from a snapshot manifest）}。
+- 同文件 L135–140：`LaunchMode` ∈ {`image`, `cold`, `memory`}。
+- L203–210 `LaunchModeForTemplate`：`img→image`、`sbx→cold`、`snp→memory`。即同一句“从模板创建”会因 kind 不同走到三条启动路径。
+- L247–299 `TemplateID` = `<profile>-<kind>-<base64url(canonical-portable-ref)>`；file ref 按 kind 校验后缀 `.image/.bundle`(img)、`.sandbox/.bundle`(sbx)、`.snapshot/.bundle`(snp)。
+- L54–58 捕获产物 `CaptureKind` ∈ {`snapshot`, `sandbox`}；L64–68 `ResumeSourceKind` ∈ {`snapshot`, `sandbox`}；L180–197 `ResolveLaunchMode`：snapshot 默认 `memory`（可显式 `cold`），sandbox 只允许 `cold`。
+- 构建模板是独立异步链：公共 builder `POST /v3/templates`（注册 name/cpu/memory）→ `POST /v2/templates/{tid}/builds/{bid}`（fromImage，节点侧 pull+flatten）→ `GET …/status`（building/ready/error），见 `internal/api/api.go` L384–391；ready 产出**持久** `e2b-img` templateID（`internal/orch/build.go` L976–992）。
+- 含义：Kuasar 的 “template” 是**引用/绑定**，不是产物类型。方法定义若不写明 kind，就说不清测的是镜像冷启、portable sandbox 冷启还是内存恢复。
+
+### 8.2 CubeSandbox：模板命名空间是“镜像构建模板 ∪ 快照”的并集
+
+- 模板：`POST /templates` body.image 必填（`CubeAPI/src/services/templates.rs` L128–133）→ `CreateTemplateFromImageReq`（L141，`source_image_ref = body.image` L150）→ CubeMaster build job，状态 building/ready/error，auto `tpl-` id。
+- 快照：`POST /sandboxes/{sandboxID}/snapshots`（`CubeAPI/src/services/snapshots.rs` L35）从**运行中的 sandbox** 捕获 → `snapshotID`；`ensure_snapshot_ready`（L66）要求 READY。
+- 同一命名空间：快照删除走 `DELETE /templates/{templateID}`，源码注释明写 “when templateID is a snapshot id”（snapshots.rs L112）。
+- 创建：`POST /sandboxes` 只收 `template_id`（`CubeAPI/src/services/sandboxes.rs` L266、L1188）；CubeMaster 把它解析为模板**或**快照，错误信息统一是 “template/snapshot not found”（sandboxes.rs L1006–1019，`openapi.yml` L79）。
+- 含义：Cube 的 create 入口是同一个，但**模板由 image 构建、快照由运行实例捕获**，产物来源与制作阶段完全不同；`templateID` 这个名字本身不能区分二者。
+
+### 8.3 AgentENV：API 的 “templateID” 就是快照 ID；Image 冷启是另一条路
+
+- 创建（warm）：`POST /sandboxes` 取 `body.template_id` → `snapshot_manager.load_runnable(&body.template_id)`（`AgentENV/src/api/impls/sandbox.rs` L1016–1024，`SandboxStageTimer::new("create_warm")`）→ `SandboxLaunchSource::Snapshot`（L1102）。
+- 模型映射：`template_id: m.snapshot_id`（sandbox.rs L341/L361/L425）——对外文档说的 “template”，存储里就是 snapshot id。
+- 冷启（Image）：`SandboxLaunchSource::Image { image_ref, overlaybd_config_path, resources, … }`（sandbox.rs L771；`src/orchestrator/types.rs` L13–25）。
+- 规格来源分叉：snapshot 路径 `resources: *snapshot.resources()` 继承快照（`src/orchestrator/service.rs` L525）；image 路径 `resources.unwrap_or_else(default_fresh_sandbox_resources)`（L559）。
+- 跨环境约束：snapshot 路径校验 `committed.virtualization_mode != configured_mode` 即报 `VirtualizationModeMismatch`（service.rs L486–490）——快照禁止跨虚拟化模式（KVM/PVM）。
+- 构建模板 = 跑一个 `template_builder` sandbox（service.rs L436 `create_template_builder`，`template_builder=true`）再 publish 快照：`snapshot_manager.publish_captured(SnapshotPublishSource::Sandbox { source_sandbox_id })`（sandbox.rs L1848），产出新的 `SnapshotId`——即下一次 create 的 template_id。
+- 含义：AgentENV 里“模板”与“快照”在 API 层**同名同物**；真正与它并列的是 Image 冷启。
+
+### 8.4 逐维度对照：为什么不可合并为同一实验方法
+
+| 维度 | 从镜像／构建模板 | 从快照创建 |
+|---|---|---|
+| 来源产物 | OCI image → 派生 image artifact（Cube `POST /templates` build job；Kuasar builder 产 `e2b-img`；AgentENV image 冷启） | 运行实例捕获的 snapshot manifest／portable sandbox（Cube snapshotID；Kuasar `snp`/`sbx`；AgentENV snapshotID） |
+| 启动路径 | 冷启动（`LaunchImage`；AgentENV `for_create_fresh`） | 快照恢复（内存 `LaunchMemory` 或磁盘冷恢复 `LaunchCold`） |
+| 前置生产动作 | build／convert／publish 异步 job（building→ready） | capture／pause／export／publish（可能暂停或占用源实例） |
+| 前置成本归属 | 一次性构建成本；共享构建与独立创建是两个条件 | 一次性捕获／发布成本；源副作用需单列 |
+| 规格来源 | 请求显式规格或默认规格（AgentENV `default_fresh_sandbox_resources`） | 继承快照规格（AgentENV `*snapshot.resources()`；Kuasar 恢复的 capacity 构成约束） |
+| 源副作用 | 无运行源 | capture 可能暂停源；Cube/AgentENV 保持源运行，Kuasar pause 默认 memory=true |
+| 跨环境约束 | 镜像 digest 可移植 | AgentENV 快照禁止跨虚拟化模式（KVM/PVM） |
+| 可测完成点 | build ready + create + running | snapshot ready + create + running／restore |
+
+### 8.5 对 B01 的方法拆分结论
+
+- **保留并强化两个独立 method 身份**：`B01.TEMPLATE` 与 `B01.SNAPSHOT` **不能合并**。现行 `sandbox_bench/registry.py`、`sandbox_graph/catalog/registry.py` 的 METHODS 列表与 [test-nodes.md §4](../../openspec/changes/sandbox-evaluation-workflow/test-nodes.md) 已经是两行，方向正确，本次审计确认其必要。
+- **`B01.TEMPLATE` 必须再钉死 `source_kind`**：否则跨产品不可比——Kuasar 的模板可以是 `img`/`sbx`/`snp`，Cube 的模板只对应 image 构建产物，AgentENV 的 “template” 实为 snapshot。已登记为要求记录来源产物 kind 与解析出的启动路径（`runtime-evaluation` RT-16／RT-24／RT-40），而不是只写 “TEMPLATE”。
+- **`B01.SNAPSHOT` 内部要再分磁盘／内存**：已登记为 `B01.SNAPSHOT.DISK` / `B01.SNAPSHOT.MEMORY`，对齐 B04 命名粒度，分别对应 Kuasar `sbx`(cold)/`snp`(memory)、Cube cold/memory（见 `test-nodes.md` §4 与 tasks 27.3）。
+- **制作成本不计入 B01**（`test-nodes.md` §4 已定），构建与捕获分别由 `B02.FULL`（image→artifact build）与 `B08`/`B05.FULL`（capture/publish）承接。
+- **“构建模板／构建快照”是产品里的独立异步阶段**（Kuasar builder job、Cube template build job、AgentENV builder sandbox + publish）。本轮已把它登记为独立场景目录 `B00.TEMPLATE_BUILD` / `B00.SNAPSHOT_BUILD`（`runtime-evaluation` RT-41、`test-nodes.md` §4、`benchmark-design.md` BCD-05/BCD-07、tasks 组 27），构建成本只计一次且不与 `B02.FULL`、`B08` 重复计税。
+
+**登记落点（本轮）**：需求 `RT-16`／`RT-24`／`RT-40`／`RT-41` 与 `RT-02` B01 行；设计 `design.md` §3 `M0`/`M1` 与 §4 B00/B01 行；节点 `test-nodes.md` §4 B00–B01 与 §9 官方方法行；执行 `benchmark-design.md` BCD-05/BCD-07；任务 `tasks.md` 组 27（代码、三产品脚本与独立单元／契约测试）。
+
+## 9. 创建端点的可及性、同步/异步与就绪信号
+
+2026-10-21 补查，纯源码审计，未运行任何沙箱、构建或性能测试。
+
+**问题**：Kuasar 的 router `/sandboxes` 与数据面 node API 是同步还是异步？口径如何落到测试？若部署没有管理面（ingress/router）角色，能否用只存在于数据面的入口？能否像 CLI 一样给创建注入 `--ready-fd`，由测试进程直接取创建成功时刻？
+
+**结论（先行）**：
+
+1. **router `/sandboxes` 同步（阻塞到 running）**；**数据面 node API 异步（返回 `starting`）**；**node-ctl `run-sandbox` 是底层异步执行体**。三者是不同层，不能混为一个“创建完成”口径。
+2. 请求 router 需部署里存在**管理面/ingress 角色**；仅有数据面时，可远程访问的创建入口只有数据面节点的 node API（异步，须轮询到 running）。
+3. **`--ready-fd` 机制已经存在**，但它是 node 内部 fd／UDS 链，**不能经 HTTP 注入**；它标记的是 `sandbox-ctl` 的 guest runtime ready，**早于** node 的 `StateRunning`。若使用，必须单列为白盒端点，不得与黑盒状态就绪混算。
+
+### 9.1 Kuasar 三层：router 同步、node API 异步、node-ctl 异步执行体
+
+**router `POST /sandboxes` —— 同步到 running**
+
+- `kuasar-components/orchestrator/internal/router/router.go` L339 `handleCreate` → L360 `routeLinkReserve(...)` → L378 `w.WriteHeader(http.StatusCreated)`（路由分派见同文件 L268／L302）。
+- registry 侧 `internal/registry/route_link.go` L188 `serveReserve` → `internal/registry/reserve_operation.go` L63 `ReserveSandbox` → `internal/registry/registry.go` L469 `reserveCreate`。
+- `reserveCreate` 内：`startReserve(...)`（registry.go L631；注释 L629 *"It does not wait — the channel reader signals completion when the node reports…"*）只负责选点并下发创建命令；随后 `wctx, cancel := context.WithTimeout(ctx, r.parkTimeout)`（registry.go L543；`parkTimeout` 默认 **30s**，见 `New` L197–210）并调用 **`r.waitReserveCall(wctx, call)`**（registry.go L1485）park 住等。
+- `waitReserveCall` 循环直到 `reserveReadyResult`（registry.go L1524）返回 ready；该函数**只有 `rec.State == StateReady` 才返回 ready**。
+- `rec.State` 变 `StateReady` 只在 `applyRoute`（registry.go L1140–1141）收到 node 上报的 **`StateRunning`** 时发生；`applyRoute` 对 `StateStarting` 显式忽略（registry.go L1111–1115，注释 *"Only running/paused are terminal route facts."*）。
+- `applyLiveRoute` 在 `rec.State == StateReady` 时调用 `r.finish(...)`（registry.go L1288–1292；`finish` 定义于 L1412）关闭 `call.done`，park 结束，router 才回 201。
+- **含义**：router 的 201 返回时沙箱已经是 `running`；若 30s 内未到 running，回滚预留并返回错误。router 侧**无需再轮询**。
+
+**node API `POST /sandboxes` —— 异步（返回 `starting`）**
+
+- `internal/api/api.go` L532 `create` → L567 `a.core.Create(...)` → L572 `writeJSON(w, 201, a.sandboxResp(sb))`。
+- `internal/orch/create.go` L19 `Create` → `acceptSandboxCreate` 建 `State: types.StateStarting`（create.go L196）→ `o.acceptFreshLaunch(...)`（orch.go L282）→ 直接 `return cloneSandbox(accepted)`，**不等 running**。
+- 状态机 `internal/types/types.go` L220–224：`StateStarting="starting"` / `StateRunning="running"` / …。
+- 异步佐证：`api.go` L213–215 `ErrSandboxStarting = errors.New("sandbox starting")`；pause 在 running 前返回 **409**（api.go L803–804）；到 running 由后台 launch worker 完成（`CommitStartingRunning` / 置 `StateRunning`，orch.go L696、L712–747）。
+
+**node-ctl `run-sandbox` —— 底层异步执行体**
+
+- `cmd/node-ctl/run_sandbox.go` 头注释：*"runSandbox is the ExecStart of `sandbox-runner@<run-id>.service`: it waits until the run-id is assigned a sandbox id, fetches that sandbox's LaunchSpec over the config-socket, starts sandbox-ctl as its direct child, waits once, and reports the bounded child result before exiting."*
+- 即每个沙箱对应一个 systemd unit 进程，是真正把沙箱从 `starting` 推进到 `running` 的 worker。
+
+### 9.2 router 角色的可及性：控制面/ingress 与数据面分离
+
+- `internal/clustercfg/config.go` 为每个角色定义独立配置：L394 `RegistryConfig`（registry member 的 unified control-plane）、L708 `RouterConfig`（注释 *"the router role's config … e2b-compatible unified ingress (cluster-router.md)"*，上游=registry、下游=e2b client ingress）、L809 `PlacerConfig`。
+- 数据面节点运行 `cmd/node-ctl` 的 `conductor`／`proxy`（`cmd/node-ctl/main.go` L61–63）。
+- **含义**：只有部署包含 router/ingress 角色，才谈得上请求 router；仅有数据面时，唯一入口是数据面节点的 node API。测试必须把实际拓扑作为显式条件记录。
+
+### 9.3 `--ready-fd` 就绪信号链（存在，但不可经 HTTP 注入）
+
+fd 由 node 自身产生并沿进程链传递：
+
+1. orchestrator 建 readiness pipe／socket，`internal/sandboxproc/start.go` L18 `Start(cmd, vmmCgroup, ready)`：`cmd.ExtraFiles += ready`，追加 `--ready-fd=<fd>`（start.go L45）。
+2. `cmd/node-ctl/taskrun.go` L346 `startSandboxChildAndReport(...)` → L353 `sandboxproc.Start(cmd, vmmCgroup, ready)`，把 fd 继续传给 `sandbox-ctl`。
+3. `sandbox-ctl` 的 `readinessFDWriter`（`sandboxer/cmd/sandbox-ctl/readiness.go`）在就绪时写 `control_ready\n` 再写 `ready\n` 随后 close。
+4. 读取端是 node 自己的 orchestrator：`internal/configsock/readiness.go`（`ReadReadiness`，协议封闭为 `control_ready → ready → EOF`，L14–18、L30–51）；`ready.sock` 路径为 `SandboxRunDir(runRoot, sandboxID)/ready.sock`（L21–26，注释 *"shared by the orchestrator and node-ctl … deliberately not part of LaunchSpec"*）。
+
+**结论**：
+
+- fd 是进程本地资源，无法放进 HTTP 请求；因此“给 node API 注入 `--ready-fd`”在远端 HTTP 场景**不成立**。
+- `ready` 事件是 **`sandbox-ctl` 的 guest runtime 里程碑**，早于 node 的 `StateRunning`（后者还需 `CommitStartingRunning`、proxy route barrier、envd 探测）。用它当“创建成功时刻”会**系统性偏早**。
+- 该信号当前只由 node 内部消费，未对外暴露。
+
+### 9.4 三种取得“创建成功时刻”的手段
+
+| 手段 | 能否注入 fd | 适用面 | 端点归属 | 可比较性 |
+|---|---|---|---|---|
+| ① router 同步调用 | 不适用 | 有管理面/ingress 角色 | `API_COMPLETE` ≈ `STATE_READY`（同一时刻） | 黑盒，可与 Cube/AgentENV 同步创建对齐 |
+| ② node API 异步 + 轮询到 running | 否 | 仅数据面、远程 | `API_COMPLETE`（201=starting）与 `STATE_READY`（running）**必须分开** | 黑盒，产品中立 |
+| ③ 同机 CLI 注入 `--ready-fd` | 是（须作为父进程） | 仅同机白盒 | 独立端点 `GUEST_READY` | 白盒；**不得**与 `STATE_READY` 并列为同列 |
+
+### 9.5 对 benchmark 的落点
+
+- 记录 `topology ∈ {router, node_direct, co_located_cli}` 作为一等条件。
+- Kuasar router 路径：`API_COMPLETE` 已等于 `STATE_READY`，**不得**再单独报一次“额外就绪延迟”造成重复计量。
+- Kuasar node 路径：`api_complete_s`（201 受理）与 `state_ready_s`（running）分别计量。
+- ready-fd 路径（若启用）：新增 `GUEST_READY` 端点，显式标白盒、排除 HTTP 传输与 node 调度，并声明与黑盒数字不可直接横比。
+
+### 附：三产品创建端点对照
+
+| 产品 | 创建返回时状态 | 同步? | 需要轮询? |
+|---|---|---|---|
+| Kuasar router `/sandboxes` | 已 `running`（park 到 running，默认 ≤30s） | ✅ | 否 |
+| Kuasar 数据面 node API `/sandboxes` | `starting`（已受理） | ❌ | ✅ 轮询到 `running` |
+| CubeSandbox `POST /sandboxes` | 已建好并 probe 通过 | ✅ | 否 |
+| AgentENV `POST /sandboxes` | 已 `Running`（`API_COMPLETE == STATE_READY`） | ✅ | 否 |
+
+**登记落点（本轮）**：需求 `RT-42`；执行设计 `benchmark-design.md` BCD-13；测试合同 `benchmark-contract-design.md` BCT-10；节点 `test-nodes.md` §3.1/§3.2；任务 `tasks.md` 组 28。
+
+## 10. 测试间环境还原：三产品预热池语义与删除/残留审计
+
+2026-10-21 补查，纯源码审计，未运行任何沙箱。
+
+**问题**：测试与测试之间要还原环境（删除本轮创建的沙箱），但不能一律“全删”——必须小批量多次删除、随后核验残留，并**排除预热／空闲池沙箱**。三产品是否都有预热池？如何区分测试归属的沙箱？
+
+**结论（先行）**：
+
+1. 三产品的“预热”都**不以可删除的沙箱记录形式**出现：Kuasar 是**预启动 runner 单元**（无 sandbox 行），Cube 是 **TAP/cgroup 资源池** ＋ idle 沙箱 `AutoPause`（暂停但仍列表），AgentENV 的 `warm-pool` 是 **ublk/网络设备级**。因此**按 sandbox 列表归属过滤**即可天然排除预热资源。
+2. 归属判据是创建时写入的 **`metadata.run_id`**：三产品创建均接受 metadata；Cube 列表**原生支持 `metadata=key=value` 过滤**，Kuasar/AgentENV 返回 metadata 需客户端过滤（AgentENV 分页）。
+3. 删除语义不同：**Kuasar 异步**（`deleting`→`dead`，需轮询 settle），**AgentENV 阻塞到删完**，Cube 同步。残留核验必须在删除后**重新列表**并处理异步 settle。
+
+### 10.1 Kuasar：预热在 runner 单元层，不在 sandbox 记录层
+
+- 预热池：`internal/orch/runpool.go` 的 `runPool` 维护 `idleRun`（预启动 systemd 单元）；`orch.go` L2730 注释 *“Idle prestarted units have no sandbox row”* —— **无 sandbox 记录，不出现在列表**。
+- 列表：`internal/api/api.go` L467 `GET /v2/sandboxes` → `a.list`（L604）→ `core.List`（`orch.go` L1110），支持 `state` 过滤与 `limit`/`nextToken` 分页；`listed()`（L1374）返回 `sandboxID/templateID/state/metadata/...`。
+- 删除：L468 `DELETE /sandboxes/{id}` → `a.kill`（L627）→ `core.Kill`，状态经 `deleting`→`dead`（`cluster.go` L1071/L1103），**异步**，需轮询 `GET /sandboxes/{id}` 直到 gone/dead。
+
+### 10.2 CubeSandbox：预热在 TAP/cgroup 资源池层，idle 沙箱是暂停
+
+- 列表原生过滤：`CubeAPI/src/services/sandboxes.rs` L92 `pub async fn list(..., metadata_filter: Option<&str>, ...)`，L120 `.filter(|sb| filter_by_metadata(sb.metadata, metadata_filter))`（L1246 `filter_by_metadata` 匹配 `key=value`）；`optional_metadata`（L1330）返回 `metadata`。
+- 预热／空闲：`Cubelet/network/runtime/tap_pool.go`（idle pooled TAP）、`Cubelet/plugins/cube/internals/cgroup/pool*.go`（cgroup 池）是**资源池**，随沙箱删除回收；`README.md` L93 `AutoPause/AutoResume — idle sandboxes auto-suspend`，idle 沙箱是**暂停（仍列表）**。
+
+### 10.3 AgentENV：warm-pool 是设备级，删除阻塞
+
+- `crates/warm-pool/src/lib.rs`（`PoolConfig`/`PoolMaintenanceAction`）用于 `storage/ublk`（`overlaybd_target.rs` “daemon warm pool to reuse a ublk device”）与网络池（`cfg.rs` `network_pool_config`/`block_pool_config`、`startup_prewarm`）—— **设备/存储层**，不是沙箱记录。
+- 列表：`X-Next-Token` 分页，metadata 返回。
+- 删除：`src/orchestrator/service.rs` L1067 `delete_sandbox` → `delete_sandbox_inner`（L1089）→ `delete_sandbox_impl`（L1222），**阻塞到删完**。
+
+### 10.4 归属判据
+
+- 创建写入 `metadata.run_id`：三产品均支持。
+- 列表过滤：Cube 原生 `metadata=run_id=<r>`；Kuasar 客户端过滤；AgentENV 客户端过滤＋分页。**只有 run_id 匹配的本轮沙箱会被删除**，预热／空闲／他轮沙箱天然排除。
+
+### 10.5 还原删除脚本设计（见 BCD-14）
+
+- **小批量多轮**：每轮删 `batch_size` 个、轮间 `gap`、`max_rounds` 上限；避免一次性全删冲击节点。
+- **基线排除**：测试前快照 `baseline_ids`（同 run_id 的预存在实例）永不删除。
+- **残留核验**：删完后**重新列表**（按 run_id），非空即 `incomplete`；异步产品需轮询 settle。
+- **失败即残留**：单次删除失败记 `failures` 并计入 residue，不算成功。
+
+**登记落点**：需求 `RT-43`；执行设计 `benchmark-design.md` BCD-14；测试合同 `benchmark-contract-design.md` BCT-11；任务 `tasks.md` 组 34；代码 `sandbox_bench/restore.py`、`Adapter.list_owned`。

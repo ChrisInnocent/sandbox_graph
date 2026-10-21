@@ -20,6 +20,7 @@
 - 支持已验收组结果的增量分析与阶段交付；最终统一分析必须包含横向对比，报告基于对比给出选型结论及限制，不能只拼接各组交付件。
 - 基于三套源码审计展开全部基础场景及低优先级扩展的用例节点，区分创建状态完成、服务端日志耗时及命令验证，明确各场景计时、断言、证据与重入合同。
 - 逐工作节点明确确定性脚本、模型判断、必要人工及实现状态，绘制节点内部 Mermaid；密度过程同步输出每秒成功创建数与整轮创建吞吐。
+- 细化来源产物语义与构建场景：创建方法身份由来源产物 kind 与解析出的启动路径决定，不按接口参数名称；模板来源钉死产物 kind，快照来源区分磁盘／内存；新增 B00 来源产物构建场景目录（构建模板产物／构建快照产物），构建成本只计一次且不与 B02.FULL、B08 重复。
 - 本次固化需求、澄清记录、编排代码与工程测试设计及实施 tasks，不编写实现、部署环境或执行性能测试。
 
 ## Capabilities
@@ -83,7 +84,17 @@
 
 36. Q3 已确认：旧任务按原图版本完成或清理，新计划使用新图版本并复用有效证据；不在活动图实例内热切换拓扑。激活、收尾与复用的协议及测试见代码设计 D14、ORC-056，实施清单见 `tasks.md`。
 
-37. 用户要求同时交付用例执行代码设计、检验测试代码的契约测试设计及实施任务；覆盖三产品适配、基础场景、密度发压、资源采集和统计。执行设计见 `benchmark-design.md`，代码契约见 `benchmark-contract-design.md`，任务15–26。用户随后授权设计审阅完成后继续 apply；真实测试条件缺失仍须保持明确阻塞。
+37. 用户要求同时交付用例执行代码设计、检验测试代码的契约测试设计及实施任务；覆盖三产品适配、基础场景、密度发压、资源采集和统计。执行设计见 `benchmark-design.md`，代码契约见 `benchmark-contract-design.md`，任务 15–27。用户随后授权设计审阅完成后继续 apply；真实测试条件缺失仍须保持明确阻塞。
+
+38. 模板／快照源码审计（见 [alignment.md §8](../../../docs/source-audit/alignment.md)）确认：创建方法身份由来源产物 kind 与解析出的启动路径决定，不由接口参数名称决定。据此登记：`B01.TEMPLATE` 钉死 `artifact_kind`（镜像产物／可移植沙箱产物／快照清单），`B01.SNAPSHOT` 拆为 `B01.SNAPSHOT.DISK` / `B01.SNAPSHOT.MEMORY`；新增来源产物构建独立场景目录 `B00.TEMPLATE_BUILD` / `B00.SNAPSHOT_BUILD`，构建成本只计一次，不与 `B02.FULL`、`B08` 重复。需求见 RT-16／RT-24／RT-40／RT-41，代码与脚本任务见 `tasks.md` 组 27。
+
+39. 组 27 的脚本接口、文件骨架、数据合同、method 路由表、CLI 与失败重入语义细化为可执行规格（[benchmark-design.md](benchmark-design.md) BCD-12 §12.1–§12.8），并给出独立测试合同（[benchmark-contract-design.md](benchmark-contract-design.md) BCT-09）。实现仍属 `/opsx-apply`，本环节只固化规格，不写代码。
+
+40. 创建端点审计（[alignment.md §9](../../../docs/source-audit/alignment.md)）确认：Kuasar router `/sandboxes` 同步到 running（registry `waitReserveCall` park 到 `applyRoute` 收到 `StateRunning`，默认 30s），数据面 node API 异步返回 `starting`（`orch.Create`），node-ctl `run-sandbox` 为底层异步执行体；Cube／AgentENV 创建同步。请求 router 需部署含管理面/ingress 角色，仅有数据面时只能走 node API（异步须轮询到 running）或同机 CLI 注入 `--ready-fd`（独立白盒端点 `GUEST_READY`，早于状态就绪，不与黑盒端点同列）。据此登记：需求 RT-42；执行设计 [benchmark-design.md](benchmark-design.md) BCD-13；测试合同 [benchmark-contract-design.md](benchmark-contract-design.md) BCT-10；图侧契约 [orchestration-design.md](orchestration-design.md) D17 与图侧测试设计 [orchestration-test-design.md](orchestration-test-design.md) T13（含不变量 I13／I14、ORC-071–073）；节点 [test-nodes.md](test-nodes.md) §3.1/§3.2；任务 `tasks.md` 组 28（脚本侧）与组 29（图侧）。
+
+41. 测试间环境还原审计（[alignment.md §10](../../../docs/source-audit/alignment.md)）确认：三产品预热都不以可删除沙箱记录出现（Kuasar 预热 runner 单元无 sandbox 行、Cube TAP/cgroup 资源池＋idle `AutoPause`、AgentENV `warm-pool` 为设备级）；删除语义 Kuasar 异步（`deleting`→`dead`）/ Cube 同步 / AgentENV 阻塞；归属判据为创建时写入的 `metadata.run_id`。据此登记：需求 RT-43，执行设计 [benchmark-design.md](benchmark-design.md) BCD-14，测试合同 [benchmark-contract-design.md](benchmark-contract-design.md) BCT-11，任务 `tasks.md` 组 34。实现 `sandbox_bench/restore.py`（小批量多轮删除＋残留核验＋基线／预热排除）与 `restore` 子命令，未跑真实环境前只登记为 locally_verified。
+
+42. 固化可选指标目录与可调背景条件目录，并产出逐场景详细规格。指标目录（36 项）见 RT-44／[benchmark-design.md](benchmark-design.md) BCD-15；条件目录（27 项）见 RT-45／BCD-16；逐场景合并规格见 [scenario-spec.md](scenario-spec.md)（B00–B10、E01–E06，含 需测/可测 指标、需声明/可选 条件、完成判据、正确性断言与失败重入）。当前缺口：B00 构建期资源／产物大小／冷热缓存未实现（BCD-15 A-01/A-02/B-03/B-04/B-05）、B00 背景密度条件未建模（BCD-16 §16.3 N-03）。任务组 36/37。
 
 ### 设计基线与仍需细化的事项
 

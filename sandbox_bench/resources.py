@@ -62,6 +62,57 @@ def parse_cgroup_cpu(text):
     return {key.replace('_usec','_seconds'): value for key,value in found.items()}
 
 
+def parse_cgroup_value(text, *, label):
+    """Parse a single-integer cgroup file (v2 memory.peak/memory.current, v1 equivalents)."""
+    fields = text.split()
+    if len(fields) != 1 or not fields[0].isdigit():
+        raise ValueError(f'invalid cgroup {label}')
+    return int(fields[0])
+
+
+def sample_cgroup(cgroup_root, path, *, environment, node, clock=time.monotonic, read_text=None):
+    """Read a per-cgroup memory high-water mark and cumulative CPU time.
+
+    The cgroup may be quota-free (no memory.max / no cpu.max): the kernel still
+    maintains `memory.peak`, a true high-water mark that is strictly stronger than a
+    sampled PSS maximum. It is NOT PSS (it includes page cache and guest usage) and must
+    be reported as a distinct metric, never substituted for the PSS contract.
+    """
+    if not environment or not node or not isinstance(path, str) or not path.startswith('/'):
+        raise ValueError('explicit environment/node and absolute cgroup path required')
+    root, reader = Path(cgroup_root), read_text or (lambda p: p.read_text())
+    base = root / path.lstrip('/')
+    result = {'status': 'unavailable', 'memory_peak_bytes': None, 'memory_current_bytes': None,
+              'cpu_seconds': None, 'started_s': clock(), 'identity': None}
+    try:
+        boot_id = reader(root / 'sys/kernel/random/boot_id').strip()
+        if not boot_id:
+            raise ValueError('boot id required')
+        cpu = parse_cgroup_cpu(reader(base / 'cpu.stat'))
+        peak = current = None
+        for peak_name, current_name in (('memory.peak', 'memory.current'),
+                                        ('memory.max_usage_in_bytes', 'memory.usage_in_bytes')):
+            try:
+                peak = parse_cgroup_value(reader(base / peak_name), label=peak_name)
+            except FileNotFoundError:
+                continue
+            try:
+                current = parse_cgroup_value(reader(base / current_name), label=current_name)
+            except FileNotFoundError:
+                current = None
+            break
+        if peak is None:
+            raise FileNotFoundError('cgroup memory peak metric missing')
+        result.update(status='valid', memory_peak_bytes=peak, memory_current_bytes=current,
+                      cpu_seconds=cpu['usage_seconds'],
+                      identity={'environment': environment, 'node': node, 'boot_id': boot_id, 'cgroup': path})
+    except (OSError, ValueError) as exc:
+        result['reason'] = {PermissionError: 'permission_denied',
+                            FileNotFoundError: 'cgroup_metric_missing'}.get(type(exc), type(exc).__name__)
+    result['ended_s'] = clock()
+    return result
+
+
 def sample_process(proc_root, pid, *, environment, node, clock=time.monotonic,
                    clock_ticks=None, read_text=None):
     """Read identity before/after PSS and CPU. Failure carries its interval/reason.
