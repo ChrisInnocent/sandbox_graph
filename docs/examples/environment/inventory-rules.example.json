@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "rules": [
+    {"component": "control_api", "role": "management", "executable_names": ["cube-api"]},
+    {"component": "cubelet", "role": "compute", "executable_names": ["cubelet"]}
+  ]
+}

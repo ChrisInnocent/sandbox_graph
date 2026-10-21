@@ -25,3 +25,8 @@
 本轮后续已接：B08有预算独立恢复和unknown资源对账；单宿主来源引用与N09/N10；基于实际测量合同的accepted复用及原样本去重；有限已注册重算派发。独立审查复现并修正B08后验丢失、恢复时间污染性能窗口、借入源引用释放、归档处置跨run、复用review重放冲突等问题，均加入回归。
 
 仍需明确保留：真实 PostgreSQL 并发／断连验收，真实 Linux procfs 权限与节点部署，三产品线上最小功能／性能验证。共享build、快照产物大小和完整源副作用、snapshot/image删除和物理释放、远端命令未知对账、补样／重测执行器等仍有代码缺口，不能归咎于仅缺环境。完整清单见统一验证记录、requirement-coverage和实施报告；tasks只按整条验收勾选。
+
+
+## 环境适配 change（2026-10-21）
+
+另一个在途 change [`implement-sandbox-environment-adapters`](../../openspec/changes/implement-sandbox-environment-adapters/tasks.md) 目前为 **22/65 tasks**。已落地的是环境检查/配置链路依赖的通用底层模块，不是完整环境检查或环境配置产品能力。三产品 adapters、产品级安装/调参/修复、环境 LangGraph/CLI 接线和真实部署验收仍未完成；详细边界见 [环境适配说明](../environment-adapters.md)。

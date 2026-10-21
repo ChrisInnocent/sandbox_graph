@@ -71,3 +71,12 @@ git diff --check
 - 未提供三产品真实环境连接、部署版本及对应实验合同，没有运行真实功能／性能／密度测试。阈值、安装策略、Guest净值定义等未决输入只阻塞相应实验，不填入合成默认值。
 
 上述实施验收结束时，代码和文档保留在工作区，未提交或发布；后续Git提交和公开发布由用户另行授权，不代表OpenSpec change已完成或已归档。
+
+
+## 环境适配 change 阶段提交状态（2026-10-21）
+
+新增 OpenSpec change `implement-sandbox-environment-adapters` 正在实施，当前 **22/65 tasks** 勾选。此次状态单独记录，不改变上文 `sandbox-evaluation-workflow` 的 23/96 状态，也不将公共底层实现计作三产品适配完成。
+
+最新全库验证命令 `.venv/bin/python -m pytest -q`：**521 passed、4 skipped、101 subtests passed**；严格校验命令 `/storage/Users/currentUser/.npm-global/bin/openspec validate implement-sandbox-environment-adapters --strict` 通过；`git diff --check` 通过。输出在本次工作区终端中验证，未生成 pytest XML 或原始日志归档。
+
+这次实现的范围是环境声明/SSH/主机探测/凭据/证据/配置事务/修复计划/有限参数/远端 journal/执行网关/注册动作及通用 inventory 等底层组件。**三种产品的产品级探测、安装与配置修复、环境图与 CLI 接线，以及真实 Linux/PostgreSQL/产品验收均未完成。** 工作机为 HarmonyOS，未提供真实环境连接信息；4 个 skipped 不得解释为真实环境测试通过。任务清单保持未勾选状态，后续提交会继续更新本记录。

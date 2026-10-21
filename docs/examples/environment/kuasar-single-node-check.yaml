@@ -1,0 +1,24 @@
+schema_version: 2
+environment_id: kuasar-evaluation
+group_id: kuasar-lab
+product: kuasar
+product_version: audited-build
+profile: kuasar.native.v1
+source_set:
+  - kuasar-sandbox=ba218fc5f20973621277484b9144a8e838ffe840
+  - orchestrator=c14da165ecc14de0e5c0afbfba2e1b737d64ee7c
+  - sandboxer=3f4978c39499c98acd5e8a7b32d450bb66ea4db9
+  - accelerator=95776915855bcaab26646e82c79aafbada5338b1
+  - connector=8fc4b6a266ff551b2747a83f43ce1c8a717ef187
+  - guest-runtime=4407480f63da9ff54b460f8977724d7f3179da80
+policy:
+  operation: check_only
+nodes:
+  - node_id: kuasar-host-01
+    machine_id: host-kuasar-01
+    roles: [conductor, proxy, runtime, registry, router, placer]
+    ssh_address: kuasar-01.example.invalid
+    ssh_user: benchmark
+    known_hosts_ref: artifact://kuasar-lab/known-hosts
+    automation_credential_ref: secret://kuasar-lab/ssh/host-01
+targets: {}

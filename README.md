@@ -9,7 +9,7 @@
 | 你要做什么 | 阅读入口 |
 | --- | --- |
 | 第一次使用、让智能体执行测试 | 本文的“首次使用”和“交给智能体的提示词” |
-| 配置真实环境、来源、规格和采集器 | [执行配置说明](docs/benchmark-wiring.md) |
+| 配置真实环境、来源、规格和采集器 | [执行配置说明](docs/benchmark-wiring.md)、[环境适配实现进度](docs/environment-adapters.md) |
 | 运行多环境组、配置数据库和恢复任务 | [编排部署与恢复](docs/orchestration/setup.md) |
 | 增删改测试、节点、环境或计算方法 | [维护指南](docs/maintenance.md) |
 | 查看设计中的节点、子流程及自动化边界 | [节点工作流](openspec/changes/sandbox-evaluation-workflow/node-workflows.md)、[节点自动化职责](openspec/changes/sandbox-evaluation-workflow/node-automation.md) |
@@ -20,6 +20,12 @@
 - **单用例执行**：`sandbox_bench.runner case` 接入真实环境配置，执行、校验和封存证据；`verify`、`recompute` 用于离线复核。需要部署证据、来源和对应能力，方法出现在目录中不等于该部署已验证支持。
 - **完整编排组件**：已有五类 LangGraph、选择器、持久状态与 Worker 接口。正式运行需要 PostgreSQL 和实际环境服务装配，当前没有一条 `sandbox_graph start` 命令可自动部署并运行全部环境。
 - **验证边界**：已有本地协议、计算和恢复测试；尚无三产品真实性能结果。具体安装配置脚本、部分方法和故障验收仍未交付，详见上述缺口文档。
+
+### 环境检查与配置实现进度
+
+环境适配 OpenSpec change 已完成一部分通用底层：声明/报告/动作契约、SSH transport、访问与主机探测、密钥和鉴权处理、配置文件原子事务、修复计划、受限动作执行接口、远端操作 journal，以及 Linux 进程 inventory。对应任务进度、验证边界和未实现清单见 [环境适配实现进度](docs/environment-adapters.md) 与 [OpenSpec tasks](openspec/changes/implement-sandbox-environment-adapters/tasks.md)。
+
+**这不是可直接执行的三产品环境准备能力。** CubeSandbox、Kuasar、AgentENV 的产品级环境检查、配置/安装/修复适配，以及环境图/CLI 接线尚未完成；当前没有能够自动完成三种沙箱环境检查和配置的端到端入口。不要据此对真实节点执行安装或宣称环境 ready。
 
 ## 工作流程
 

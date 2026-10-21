@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "note": "Source pointers are review fixtures, not deployment verification.",
+  "rules": [
+    {
+      "id": "cube.api-auth-carrier",
+      "repository": "CubeSandbox",
+      "commit": "b25e416e990e6ba0641b4609974c53c61ee568f0",
+      "path": "CubeAPI/src/middleware/auth.rs",
+      "symbol": "extract_credential",
+      "fact": "Bearer credential takes priority over X-API-Key"
+    },
+    {
+      "id": "kuasar.group-import-file-only",
+      "repository": "orchestrator",
+      "commit": "c14da165ecc14de0e5c0afbfba2e1b737d64ee7c",
+      "path": "internal/placer/groups.go",
+      "symbol": "NewConfiguredGroupInputs",
+      "fact": "The audited placer group source type is file"
+    },
+    {
+      "id": "agentenv.api-key-header",
+      "repository": "AgentENV",
+      "commit": "49684233698d40dd800c1d0edba15ab30a745eeb",
+      "path": "src/api/impls/auth.rs",
+      "symbol": "API_KEY_HEADER",
+      "fact": "The API key carrier is X-API-Key"
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+schema_version: 2
+environment_id: agentenv-evaluation
+group_id: agentenv-lab
+product: agentenv
+product_version: audited-build
+profile: agentenv.native.v1
+source_set:
+  - AgentENV=49684233698d40dd800c1d0edba15ab30a745eeb
+policy:
+  operation: check_only
+nodes:
+  - node_id: agentenv-control-01
+    machine_id: host-agentenv-control-01
+    roles: [scheduler, gateway]
+    ssh_address: aenv-control-01.example.invalid
+    ssh_user: benchmark
+    known_hosts_ref: artifact://agentenv-lab/known-hosts
+    automation_credential_ref: secret://agentenv-lab/ssh/control
+  - node_id: agentenv-runtime-01
+    machine_id: host-agentenv-runtime-01
+    roles: [server]
+    ssh_address: aenv-runtime-01.example.invalid
+    ssh_user: benchmark
+    known_hosts_ref: artifact://agentenv-lab/known-hosts
+    automation_credential_ref: secret://agentenv-lab/ssh/runtime
+targets: {}

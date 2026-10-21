@@ -1,0 +1,22 @@
+schema_version: 2
+environment_id: cube-evaluation
+group_id: cube-lab
+product: cubesandbox
+product_version: 1.2.3
+profile: cube.oneclick.v1
+source_set:
+  - CubeSandbox=b25e416e990e6ba0641b4609974c53c61ee568f0
+policy:
+  operation: check_only
+service_endpoints:
+  control_api: https://cube-control.example.invalid
+nodes:
+  - node_id: cube-compute-01
+    machine_id: host-cube-01
+    roles: [compute]
+    ssh_address: cube-compute-01.example.invalid
+    ssh_port: 22
+    ssh_user: benchmark
+    known_hosts_ref: artifact://cube-lab/known-hosts
+    automation_credential_ref: secret://cube-lab/ssh/compute
+targets: {}
