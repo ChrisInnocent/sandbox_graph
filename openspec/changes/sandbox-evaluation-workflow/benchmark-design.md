@@ -629,6 +629,34 @@ async def await_operation(adapter, handle, plan, *, timeout, poll_interval, slee
 
 无新子命令；`case` 在 N05 按 `completion_plan` 决定是否轮询；Kuasar 创建的 router/node 入口分别记录。未确认同步性标 `unverified`，不默认。
 
+### BCD-18 创建时延的客户端口径（对齐官方基准）
+
+对齐 Cube 官方 `examples/cube-bench` 与 AgentENV E2B 基准的口径：**复用已预热连接 + 对同步入口在响应头停表**。审计：`CubeSandbox/examples/cube-bench/runner.go`（`client.Do` 返回即停表；`newHTTPClient`/`RunWarmup` 复用并预热）、`AgentENV/scripts/e2b/run-e2b-benchmark.sh`（E2B SDK 持久连接）。
+
+#### 18.1 数据合同（`sandbox_bench/transport.py`）
+
+```python
+class Session:                      # 一个 run 内复用连接
+    def __init__(self, *, max_per_host, idle_timeout_s): ...
+    def request(self, method, url, *, body, headers, timeout) -> Response: ...
+    def close(self) -> None: ...
+# Response 现有字段：headers_s（响应头到达）与 complete_s（读完 body）；新增：caliber_version
+```
+
+- 连接按 `(scheme, host, port)` 复用（keep-alive）；`max_per_host >= 并发`，`idle_timeout_s` 显式；run 结束 `close()`。
+- `caliber_version`：如 `create.header_stop.reuse.warmup.v1`，进入可比性键。
+
+#### 18.2 度量规则
+
+- 同步创建：`create_latency = headers_s`（响应头）；**`body_read_s = complete_s - headers_s` 分列**，不计入创建时延，不当作完成。
+- 预热：正式测量前完成 `warmup` 次 create（或 create+delete）并**排除在统计外**；记录轮次与是否可用。
+- 异步入口：仍轮询到目标状态停表（BCD-17），并记录轮询间隔（须足够密，见 RT-47）。
+- 口径不同（未复用/计入握手/计入整包） **不得**混入同一时延列；按 `caliber_version` 分组，缺证据标 `unverified`。
+
+#### 18.3 接入
+
+`Adapter` 持有 run 级 `Session`（不再每请求新建连接）；`create` 同时返回 `api_headers_s` 与 `api_complete_s`；N05/统计以 `caliber_version` 标注，缺预热/复用证据标 `unverified`。不改方法、条件与端点身份。
+
 ## Risks / Trade-offs
 
 - Python 发压／采样开销可能影响高并发 → 保存发生器指标、界限和实际负载；先证明正确，必要时替换底层引擎而不改数据合同。

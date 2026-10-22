@@ -313,3 +313,15 @@
 - [x] 40.2 图侧 N05 接入：N05 按 `completion_plan` 决定是否轮询，同步不重复计量、异步分列 `api_complete_s`/`state_ready_s`，入口分列（D20）。验收：ORC-076 通过。
 - [x] 40.3 独立单元测试：`tests/benchmark/unit/test_operation_sync.py`（BCT-13）。验收：全组通过；字面量 oracle，不调用被测函数生成预期。
 - [ ] 40.4 真实环境：在三产品真实部署下确认暂停/恢复/删除/快照的同步性与终点（含 Kuasar router/node 与 AgentENV fork、Kuasar export、Cube snapshot 的待实证项）。验收：需真实环境；缺环境时保持 blocked。
+
+## 41. 创建时延客户端口径（对齐官方基准）
+
+规格 RT-47，详设 [benchmark-design.md](benchmark-design.md) BCD-18，测试合同 [benchmark-contract-design.md](benchmark-contract-design.md) BCT-14。对齐 Cube 官方 `examples/cube-bench/runner.go`（`client.Do` 停表 + 连接复用 + `RunWarmup`）与 AgentENV E2B 基准（持久连接）。审计见 [alignment.md](../../../docs/source-audit/alignment.md)。
+
+- [ ] 41.1 `sandbox_bench/transport.py`：新增 run 级 `Session` 连接池——按 `(scheme,host,port)` 复用 keep-alive，`max_per_host>=并发`、`idle_timeout_s` 显式，run 结束 `close()`；不再每请求新建连接。验收：BCT-14-REUSE 通过（假连接计数器，N 请求建连 ≤ `max_per_host`）。
+- [ ] 41.2 停表点对齐：同步创建 `create_latency = headers_s`（响应头）；`body_read_s = complete_s - headers_s` **分列**，不计入创建时延。`Adapter._sandbox`/`measure.create_sync`/`scenarios` 的 `accepted.observed_at` 改用响应头时刻。验收：BCT-14-HEADER 通过（T1<T2，完成时延取 T1）。
+- [ ] 41.3 预热：正式测量前完成 `warmup` 次 create（或 create+delete）并**排除在统计外**；记录轮次/条数/是否可用。验收：BCT-14-WARMUP 通过（warmup=3、实测=10 → `n_attempts==10`）。
+- [ ] 41.4 口径版本与可比性：`caliber_version`（如 `create.header_stop.reuse.warmup.v1`）进入可比性键；跨版本→不可比；缺口径/缺复用/缺预热证据→`unverified`。验收：BCT-14-CALIBER 通过；RT-47 的四个 Scenario 有反例覆盖。
+- [ ] 41.5 独立测试：`tests/benchmark/unit/test_create_caliber.py`（BCT-14，独立 marker；手动时钟/计数器，不用真实 sleep 猜时序）。验收：BCT-14 全组通过；字面量 oracle，不调用被测函数生成预期。
+- [ ] 41.6 文档：更新 [benchmark-wiring.md](../../../docs/benchmark-wiring.md)（客户端口径与预热）、[benchmark-matrix.md](../../../docs/benchmark-matrix.md)（口径版本为轴）、[acceptance-manual.md](../../../docs/acceptance-manual.md)（同环境与官方口径对照步骤）。
+- [ ] 41.7 真实环境对照：在同一环境用**官方口径**与**本口径**各测一轮 B01 同步创建，确认收敛（同规格/并发/请求，排除预热），并记录 `api_headers_s`/`api_complete_s`/复用与预热证据。验收：需真实环境；缺环境时保持 blocked。

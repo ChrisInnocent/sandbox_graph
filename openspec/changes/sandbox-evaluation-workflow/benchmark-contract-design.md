@@ -214,6 +214,20 @@ B00–B10 的所有子方法以场景文件中的参数化 case_id 展开，不�
 
 层级与目录：`tests/benchmark/unit/test_operation_sync.py`（独立 marker，不共用数据库／故障夹具）。受控通过只提升代码契约状态，不声称真实环境验证。
 
+### BCT-14 创建时延口径的独立测试合同
+
+对应 BCD-18、RT-47 与 tasks 组 41。oracle 为手写分时/计数表，不调用被测函数生成预期。
+
+| 编号 | 被测 | 独立 oracle | 关键断言 |
+|---|---|---|---|
+| BCT-14-HEADER | 同步创建停表点 | 假 transport：响应头在 T1、body 在 T2（T2>T1） | `create_latency==T1`；`body_read_s==T2-T1`；完成时延不得用 T2 |
+| BCT-14-REUSE | run 级连接复用 | 假连接计数器 | 同一 `(scheme,host,port)` 并发 N 请求只建连接 ≤ `max_per_host`；run 后 `close()` |
+| BCT-14-WARMUP | 预热排除 | 字面量：warmup=3、实测=10 | 统计 `n_attempts==10`；预热轮次被记录且不入分位 |
+| BCT-14-CALIBER | 口径版本与可比性 | 两个 `caliber_version` | 同版本可比；跨版本→不可比；缺口径→`unverified` |
+| BCT-14-POLL-DENSITY | 异步轮询密度 | 轮询间隔字面量 | 过粗（相对 ms 级创建）→ 拒或 `unverified`（接 RT-47 / #5） |
+
+层级与目录：`tests/benchmark/unit/test_create_caliber.py`（独立 marker；手动时钟/计数器，不用真实 sleep 猜时序）。受控通过只提升代码契约状态，不声称与官方基准已完成对比。
+
 ## Risks / Trade-offs
 
 - 控制服务与产品都可能符合错误理解 → API fixture 关联固定源码证据，真实环境抽查形成独立证据。
