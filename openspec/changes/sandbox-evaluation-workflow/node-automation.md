@@ -15,6 +15,8 @@ S 是**应当脚本化的职责**，不是完成声明。实现状态独立使�
 
 脚本合同 ID 是逻辑能力名称，不是已存在文件或可执行命令。后续可将多个合同放在同一工具内，或一个合同调用多个适配器；不得为凑表而逐行创建脚本文件。纯规则节点不调用模型；每个工作节点仍有负责 agent，看护以事件驱动，不是持续模型轮询。
 
+> **实现现状（勿与设计混淆）**：工作节点**确实被执行**——`build_job_handlers` 注册 `work` 图（`build_work`），worker 消费 `job_kind='work'` 并运行 N00–N10；但节点 handler 来自 `node_service_factory` 注册的**确定性脚本适配器**，**不调用模型**。`owner_agent_id` 只是 `WorkInstance`/`NodeContext` 的**记账标识**（`NodeExecutor` 填 `f'{scope}/{node_id}'`），不是 agent 进程。`runtime/agents.py` 的 `AgentGateway`/`ModelGateway`/`DiagnosisProposal` 仅有接口与预算/提案校验，**无生产接线**；仓库也**没有真实模型实现**（只有 `Protocol` 与测试 `SpyModel`）。因此“每个工作节点一个 agent 接管”目前**是设计，不是已实现**。图对工作的 fanout 是**持久 work job**（`SchedulingService.dispatch_work`，`job_kind='work'`，受 `max_work_concurrency` 限制），**并非 sub-agent fanout**。
+
 ## 2. 每个节点都要有的合同
 
 | 字段 | 明确内容 |
