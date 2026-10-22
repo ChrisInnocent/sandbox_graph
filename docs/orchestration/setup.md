@@ -119,4 +119,5 @@ await worker.serve(stop_event)
   - 分析产物（含 Excel）：`python -m sandbox_graph export-analysis --run-id <run> --artifacts-root <root> --out <dir>`。
   - 某 run 的测量证据（数据/原始载荷/资源样本）：`python -m sandbox_graph export-cases --run-id <run> --artifacts-root <root> --out <dir>`（每个 work 一个子目录，内容为 N10 封存并经 `delivery_finalizer` 入库的同一份证据，即 A3 的输入）。
   - 用例证据：按交付输出里的 `case_index_ref` 在 store 中定位 `<scope>/<sha256>`（scope 为环境组）。
+  - **先看有什么**：`python -m sandbox_graph status <run_id>` 现在会列出 `deliveries`（每个 work 的 `case_index_ref` 与证据 `artifact_id`）、`analyses`（`files` 含 `facts.xlsx`）和 `archives`；据此再决定用哪条导出命令。
   - F4 被阻塞时，F1/`analysis_exports` 仍可定位产物；这只证明产物流水存在，**不证明交付或覆盖完整**。

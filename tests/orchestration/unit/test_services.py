@@ -50,3 +50,21 @@ def test_stage_only_start_requires_exact_source_and_dispatches_no_measurement(re
         assert len(jobs)==1 and jobs[0]['body']['job_kind']=='analysis'
         assert jobs[0]['body']['payload']['analysis_input_ref']=='input'
         assert jobs[0]['body']['payload']['plan_ref']==source_plan.hash
+
+
+def test_status_exposes_deliveries_analysis_artifacts_and_archives(repository):
+    with repository.transaction() as tx:
+        tx.put('runs','r',{'active_plan_ref':'p','graph_ref':'g'})
+        tx.put('work_instances','w1',{'work_id':'w1','run_id':'r'})
+        tx.put('work_deliveries','d1:1',{'scope':'G_A','work_refs':['w1'],
+            'result':{'output':{'case_index_ref':'G_A:abc'}},
+            'evidence':[{'artifact_id':'G_A:abc'},{'artifact_id':'G_A:def'}]})
+        tx.put('analysis_results','a1',{'run_id':'r','analysis_input_ref':'i1'})
+        tx.put('analysis_exports','a1',{'files':{'facts.xlsx':{'artifact_id':'r:x'},'report.md':{'artifact_id':'r:y'}}})
+        tx.put('archives','arch',{'run_id':'r','status':'partial','artifact_refs':['r:x']})
+    status=QueryService(repository).status('r')
+    assert status['deliveries'][0]['case_index_ref']=='G_A:abc'
+    assert 'G_A:def' in status['deliveries'][0]['evidence']
+    assert status['analyses'][0]['analysis_ref']=='a1'
+    assert status['analyses'][0]['files']==['facts.xlsx','report.md']
+    assert status['archives'][0]['status']=='partial'

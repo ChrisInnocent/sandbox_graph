@@ -92,7 +92,26 @@ class QueryService:
         with self.repository.transaction() as tx:
             row=tx.get('runs',run_id)
             if not row: raise KeyError(run_id)
-            return {'run':row['body'],'revision':row['revision'],'jobs':[j['body'] for j in tx.scan('jobs') if j['body'].get('run_id')==run_id], 'operations':[o['body'] for o in tx.scan('operations') if o['body'].get('run_id')==run_id]}
+            work_ids={w['key'] for w in tx.scan('work_instances') if w['body'].get('run_id')==run_id}
+            deliveries=[]
+            for record in tx.scan('work_deliveries'):
+                body=record['body']
+                if not set(body.get('work_refs',())) & work_ids: continue
+                deliveries.append({'work_refs':list(body.get('work_refs',())),'scope':body.get('scope'),
+                    'case_index_ref':(body.get('result',{}).get('output') or {}).get('case_index_ref'),
+                    'evidence':sorted(r['artifact_id'] for r in body.get('evidence',()))})
+            analyses=[]
+            for record in tx.scan('analysis_results'):
+                body=record['body']
+                if body.get('run_id')!=run_id: continue
+                export=tx.get('analysis_exports',record['key'])
+                analyses.append({'analysis_ref':record['key'],'analysis_input_ref':body.get('analysis_input_ref'),
+                    'files':sorted((export['body'].get('files') if export else {}) or {})})
+            archives=[a['body'] for a in tx.scan('archives') if a['body'].get('run_id')==run_id]
+            return {'run':row['body'],'revision':row['revision'],
+                    'jobs':[j['body'] for j in tx.scan('jobs') if j['body'].get('run_id')==run_id],
+                    'operations':[o['body'] for o in tx.scan('operations') if o['body'].get('run_id')==run_id],
+                    'deliveries':deliveries,'analyses':analyses,'archives':archives}
     def versions(self,kind,*,prefix=''):
         if kind not in {'graph_definitions','plans','deliveries','reviews','analysis_inputs','archives','revision_activations'}: raise ValueError('not a versioned query kind')
         with self.repository.transaction() as tx: return [r for r in tx.scan(kind) if r['key'].startswith(prefix)]

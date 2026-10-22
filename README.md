@@ -135,6 +135,9 @@ python3 -m venv .venv
 **把一次 run 的全部测量证据（数据/原始载荷/资源样本/日志）拿回来**（就是 A3 做指标测算的输入）：
 
 ```bash
+# 先看这次 run 到底产了什么（deliveries / analyses.files / archives）
+.venv/bin/python -m sandbox_graph status RUN_ID
+
 .venv/bin/python -m sandbox_graph export-cases --run-id RUN_ID \
     --artifacts-root /path/to/artifacts --out ./case-evidence
 # 每个 work 一个子目录（多 work 时）：summary.json / summary.csv / raw/… / *.json
