@@ -90,7 +90,12 @@ def build_work(executor,checkpointer=None):
     for node_id in nodes:
         graph.add_node(node_id,wrap(node_id))
         graph.add_conditional_edges(node_id,lambda state:state['next_node'],list(nodes)+( [END]))
-    graph.add_edge(START,'N00')
+    # 循环工程：修复后图级再入——从 `resume_from` 指定的工作节点继续，
+    # 不重跑已完成的节点（旧 receipt 不变）；未指定则从 N00 开始。
+    def entry(state):
+        resume=state.get('resume_from')
+        return resume if resume in nodes else 'N00'
+    graph.add_conditional_edges(START,entry,list(nodes))
     return graph.compile(checkpointer=checkpointer)
 
 

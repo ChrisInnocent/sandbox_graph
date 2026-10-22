@@ -86,6 +86,8 @@ class Driver:
             graph=self.graph_builder(executor,checkpointer=saver)
             config={'configurable':{'thread_id':activation.thread_id,'checkpoint_ns':''},'recursion_limit':activation.recursion_limit}
             state={'thread_id':activation.thread_id,'scope':activation.scope,'run_ref':activation.run_id,'plan_ref':activation.plan_ref,'graph_ref':activation.graph_ref,'activation_id':activation.activation_id,'input_refs':dict(activation.input_refs),'result_refs':{},'results':{},'node_visits':{}}
+            if activation.input_refs.get('resume_from'):
+                state['resume_from']=str(activation.input_refs['resume_from'])   # 修复后再入：从该节点继续
             async def heartbeat():
                 while True:
                     await asyncio.sleep(activation.lease_seconds/3)

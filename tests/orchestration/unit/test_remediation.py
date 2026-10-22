@@ -110,3 +110,29 @@ def test_supervision_orders_remedy_and_remedy_reexecutes_failed_node():
     with repo.transaction() as tx:
         outcomes = [r['body'] for r in tx.scan('agent_remedies') if r['body'].get('status') == 'succeeded']
         assert outcomes and outcomes[0]['attempt'] == 1
+
+
+def test_work_graph_resumes_from_the_given_node():
+    """修复后再入：从 resume_from 继续，不重跑 N00..。"""
+    import asyncio as _asyncio
+    from sandbox_graph.graphs.factory import build_work
+    from sandbox_graph.runtime.leases import LeaseService as _LS
+    from sandbox_graph.graphs.executor import NodeExecutor as _NE
+    from sandbox_graph.domain.models import NodeResult as _NR
+
+    repo = MemoryRepository(FakeClock())
+    token = _LS(repo).acquire_thread('resume-thread', 'worker', 100)
+    visited = []
+
+    def handler(node):
+        async def run(context):
+            visited.append(node)
+            return _NR(execution_status='succeeded')
+        return run
+
+    handlers = {n: handler(n) for n in __import__('sandbox_graph.catalog.registry', fromlist=['NODE_GROUPS']).NODE_GROUPS['work']}
+    graph = build_work(_NE(repo, handlers, token))
+    state = {'thread_id': 'resume-thread', 'scope': 'w', 'run_ref': 'r', 'plan_ref': 'p', 'graph_ref': 'g',
+             'activation_id': 'a', 'input_refs': {}, 'resume_from': 'N05'}
+    _asyncio.run(graph.ainvoke(state))
+    assert visited[0] == 'N05' and 'N00' not in visited and visited[-1] == 'N10'

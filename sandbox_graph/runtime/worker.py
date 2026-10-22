@@ -13,6 +13,15 @@ from ..persistence.repository import Conflict,StaleOwner
 from .driver import Driver,Activation
 from .events import EventService,EventEnvelope
 from .tasks import TaskBackend,JobSpec
+from ..catalog.registry import NODE_GROUPS
+
+
+def _next_work_node(node_id):
+    """工作节点链上的下一个节点；N10 之后为 None。"""
+    nodes=NODE_GROUPS['work']
+    if node_id not in nodes: return None
+    index=nodes.index(node_id)
+    return nodes[index+1] if index+1<len(nodes) else None
 
 class WorkerPolicy(Model):
     claim_seconds: float = Field(gt=0)
@@ -387,7 +396,18 @@ class RemedyJobHandler:
         with self.repository.transaction() as tx:
             tx.put('agent_remedies',f'{ref}:outcome',{'status':status,'attempt':order['attempt'],
                    'action_ref':order['action_ref'],'receipt_ref':receipt},immutable=True)
-        return {'execution_status':status,'output':{'remedy_ref':ref,'receipt_ref':receipt,'attempt':order['attempt']}}
+            # 修复成功后图级再入：从该节点的下一个节点继续跑完工作图（旧 receipt 不变）。
+            nxt=_next_work_node(order['node_id'])
+            if status=='succeeded' and nxt is not None:
+                run=tx.get('runs',order['run_ref'])
+                TaskBackend.enqueue_in(tx,JobSpec(job_id=str(uuid4()),job_kind='work',scope_ref=order['work_ref'],
+                    thread_id=f'work:{canonical_hash(order["work_ref"])}',activation_id=str(uuid4()),
+                    dedupe_key=f'continue:{ref}:{nxt}',due_at=tx.now,deadline=job['deadline'],
+                    run_id=order['run_ref'],dispatch_generation=run['body']['dispatch_generation'] if run else 1,
+                    payload={'work_ref':order['work_ref'],'plan_ref':order['plan_ref'],
+                             'graph_ref':order['graph_ref'],'resume_from':nxt,'remedy_ref':ref}))
+        return {'execution_status':status,'output':{'remedy_ref':ref,'receipt_ref':receipt,
+                'attempt':order['attempt'],'resume_from':_next_work_node(order['node_id']) if status=='succeeded' else None}}
 
 
 class RecoveryJobHandler:
