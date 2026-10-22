@@ -168,9 +168,13 @@ class ScenarioExecutor:
         measured = began if measurement_started is None else measurement_started
         spec = replace(self._spec(target=target, kind=kind),
                        timeout=began+self.case.completion.timeout_s-measured)
+        # 官方口径：受理时刻 = **响应头**到达（而非读完 body）。Adapter 带回 api_headers_s。
+        accepted_at = self.clock()
+        if isinstance(handle, dict) and isinstance(handle.get('api_headers_s'), (int, float)):
+            accepted_at = began + handle['api_headers_s']
         return await self.observer.observe(spec,
             submitted_at=measured, process_epoch=self.process_epoch,
-            accepted=Acceptance(True, self.clock(), self.process_epoch, handle),
+            accepted=Acceptance(True, accepted_at, self.process_epoch, handle),
             inspect=inspect, execute=execute, server_terminal=self.terminal_provider)
 
     async def _fixture_assertion(self, phase: str, handle: dict) -> dict:

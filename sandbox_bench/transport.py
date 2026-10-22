@@ -50,15 +50,15 @@ def validate_url(url):
         raise TransportError("invalid HTTP endpoint") from None
 
 
-def request(method, url, *, body=None, headers=None, timeout, on_chunk=None):
-    """One request, no redirects/retries. Timeout covers headers and entire body."""
+def _check_timeout(timeout):
     if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
         raise TransportError("invalid request timeout")
-    parsed = validate_url(url)
+
+
+def _perform(connection, method, parsed, *, body, headers, timeout, on_chunk):
+    """One request/response on a connection; returns (Response, reusable)."""
     started = time.monotonic()
     deadline = started + timeout
-    connection_class = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
-    connection = connection_class(parsed.hostname, parsed.port, timeout=timeout)
     expired = threading.Event()
     response = None
 
@@ -108,8 +108,9 @@ def request(method, url, *, body=None, headers=None, timeout, on_chunk=None):
             raise TransportError("request deadline exceeded")
         if response.length not in (None, 0):
             raise TransportError("incomplete HTTP response", status)
+        reusable = not getattr(response, "will_close", False)
         return Response(status, {k.lower(): v for k, v in response.getheaders()},
-                        b"".join(chunks), headers_s, time.monotonic() - started)
+                        b"".join(chunks), headers_s, time.monotonic() - started), reusable
     except TransportError:
         raise
     except (OSError, http.client.HTTPException, ValueError, UnicodeError):
@@ -117,9 +118,82 @@ def request(method, url, *, body=None, headers=None, timeout, on_chunk=None):
                              else "HTTP transport failed") from None
     finally:
         timer.cancel()
-        if response is not None:
-            response.close()
+
+
+def request(method, url, *, body=None, headers=None, timeout, on_chunk=None):
+    """One request on a one-off connection (no reuse); see Session for keep-alive."""
+    _check_timeout(timeout)
+    parsed = validate_url(url)
+    connection_class = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
+    connection = connection_class(parsed.hostname, parsed.port, timeout=timeout)
+    try:
+        response, _ = _perform(connection, method, parsed, body=body, headers=headers,
+                               timeout=timeout, on_chunk=on_chunk)
+        return response
+    finally:
         connection.close()
+
+
+class Session:
+    """Run-level keep-alive pool: reuse connections per (scheme, host, port).
+
+    Aligns with official benchmarks (Cube bench reuses one http.Client and warms it up);
+    a fresh connection per request would put the TCP/TLS handshake inside create latency.
+    """
+
+    def __init__(self, *, max_per_host=64, idle_timeout_s=90.0):
+        if isinstance(max_per_host, bool) or not isinstance(max_per_host, int) or max_per_host < 1:
+            raise ValueError("max_per_host must be a positive integer")
+        if isinstance(idle_timeout_s, bool) or not isinstance(idle_timeout_s, (int, float)) or idle_timeout_s <= 0:
+            raise ValueError("idle_timeout_s must be positive")
+        self.max_per_host = max_per_host
+        self.idle_timeout_s = idle_timeout_s
+        self._pool = {}
+        self._lock = threading.Lock()
+        self.connections_opened = 0
+
+    def _acquire(self, parsed, timeout):
+        key = (parsed.scheme, parsed.hostname, parsed.port)
+        with self._lock:
+            pool = self._pool.setdefault(key, [])
+            if pool:
+                return pool.pop()
+            self.connections_opened += 1
+        connection_class = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
+        return connection_class(parsed.hostname, parsed.port, timeout=timeout)
+
+    def _release(self, parsed, connection):
+        key = (parsed.scheme, parsed.hostname, parsed.port)
+        with self._lock:
+            pool = self._pool.setdefault(key, [])
+            if len(pool) < self.max_per_host:
+                pool.append(connection)
+                return
+        connection.close()
+
+    def request(self, method, url, *, body=None, headers=None, timeout, on_chunk=None):
+        _check_timeout(timeout)
+        parsed = validate_url(url)
+        connection = self._acquire(parsed, timeout)
+        try:
+            response, reusable = _perform(connection, method, parsed, body=body, headers=headers,
+                                          timeout=timeout, on_chunk=on_chunk)
+        except BaseException:
+            connection.close()
+            raise
+        if reusable:
+            self._release(parsed, connection)
+        else:
+            connection.close()
+        return response
+
+    def close(self):
+        with self._lock:
+            pools = list(self._pool.values())
+            self._pool = {}
+        for pool in pools:
+            for connection in pool:
+                connection.close()
 
 
 def decode_json(raw):

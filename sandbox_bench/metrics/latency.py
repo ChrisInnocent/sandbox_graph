@@ -4,7 +4,7 @@ import math
 from .common import number
 
 
-def summarize_latency(rows, *, comparability_fields=('product','method','completion_kind','clock_domain','fixture_id','cache_mode','specification','repeat')):
+def summarize_latency(rows, *, comparability_fields=('product','method','completion_kind','clock_domain','fixture_id','cache_mode','specification','repeat','caliber_version')):
     rows=list(rows)
     for key in comparability_fields:
         if any(row.get(key) != rows[0].get(key) for row in rows[1:]):

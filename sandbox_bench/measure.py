@@ -4,6 +4,26 @@ import math
 import time
 import uuid
 
+# 创建时延口径版本（对齐官方：响应头停表 + 连接复用/预热）。进入可比性键。
+CREATE_CALIBER_REUSE = 'create.header_stop.reuse.warmup.v1'
+CREATE_CALIBER_ONE_OFF = 'create.header_stop.oneoff.v1'
+
+
+def warmup(adapter, count, run_id, timeout, *, cleanup=True):
+    """预热：建立并复用连接，**不计入统计**（等价 Cube 官方 RunWarmup）。"""
+    if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+        raise ValueError('warmup count must be a non-negative integer')
+    done = 0
+    for _ in range(count):
+        handle = adapter.create(run_id, timeout)
+        if cleanup:
+            try:
+                adapter.delete(handle, timeout)
+            except Exception:
+                pass
+        done += 1
+    return done
+
 
 def error_record(exc):
     """Record a classification, never raw exception text or HTTP response secrets."""
@@ -43,7 +63,9 @@ def create_sync(adapter, run_id, timeout, poll_interval, *, clock=time.monotonic
     deadline = started + timeout
     row = {"operation_id": uuid.uuid4().hex, "run_id": run_id,
            "started_at_ns": time.time_ns(), "status": "failed",
-           "unknown_create_outcome": False, "observations": [], "completion": completion}
+           "unknown_create_outcome": False, "observations": [], "completion": completion,
+           "caliber_version": CREATE_CALIBER_REUSE if getattr(adapter, "session", None) is not None
+           else CREATE_CALIBER_ONE_OFF}
     handle = None
 
     def finish(status, reason=None):
@@ -65,9 +87,13 @@ def create_sync(adapter, run_id, timeout, poll_interval, *, clock=time.monotonic
         return finish("timeout" if isinstance(exc, TimeoutError) else "failed", "create_error")
 
     if completion == "API_COMPLETE":
+        result = finish("success" if clock() < deadline else "timeout")
         if synchronous:
-            row["state_ready_s"] = row["api_complete_s"]
-        return finish("success" if clock() < deadline else "timeout")
+            # 官方口径：同步创建在**响应头**停表；整包读取单列，不计入创建时延。
+            row["state_ready_s"] = row["api_headers_s"]
+            row["body_read_s"] = max(0.0, row["api_complete_s"] - row["api_headers_s"])
+            row["elapsed_s"] = row["api_headers_s"]
+        return result
     if synchronous:
         # A synchronous entry already returned after ready: record readiness at the same
         # moment and do not fabricate a second readiness delay by polling (BCD-13 §13.5).

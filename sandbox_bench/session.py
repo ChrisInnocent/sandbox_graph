@@ -19,7 +19,19 @@ from .contracts import CaseContract
 from .journal import FileJournal
 from .load import LoadEngine, LoadSchedule, OperationResult
 from .runner import atomic_json, digest, environment_identity, redact
-from .measure import error_record
+from .transport import Session
+from .measure import error_record, CREATE_CALIBER_ONE_OFF, CREATE_CALIBER_REUSE
+
+
+def _http_session(config):
+    """run 级连接复用（官方口径）；`connection_reuse: false` 时退回单次连接。"""
+    if config.get('connection_reuse', True) is False:
+        return None
+    pool = config.get('http_pool') or {}
+    if not isinstance(pool, dict):
+        raise ValueError('http_pool must be a mapping')
+    return Session(max_per_host=pool.get('max_per_host', 64),
+                   idle_timeout_s=pool.get('idle_timeout_s', 90.0))
 
 
 class BenchSession:
@@ -43,7 +55,7 @@ class BenchSession:
                 atomic_json(path,identity);atomic_json(self.folder/'case.json',case.model_dump(mode='json'))
         self.journal=FileJournal(self.folder/'ledger',case.work_id,
                                 child_budget=case.load.requests,parent_budget=case.load.requests//(case.clone_count or 1))
-        self.adapter=Adapter(config)
+        self.adapter=Adapter(config, session=_http_session(config))
         if scenario is None:
             from .scenarios import ScenarioExecutor
             scenario=ScenarioExecutor(case,self.adapter,on_owned=self._owned,on_progress=self._build_event,
@@ -465,6 +477,12 @@ class BenchSession:
         self.journal.audit('observation_stopped',process_epoch=self.process_epoch)
         return {'status':'completed'}
 
+    def close(self):
+        """关闭 run 级连接池（不计入测量）。"""
+        session=getattr(self.adapter,'session',None)
+        if session is not None:
+            session.close()
+
     def records(self):
         load_path=self.folder/'load.json'
         report=json.loads(load_path.read_text()) if load_path.exists() else {}
@@ -479,6 +497,8 @@ class BenchSession:
                         else 'accepted' if completion else 'unknown')
             row={'operation_id':str(index),'status':result['status'],'elapsed_s':elapsed,
                          'api_status':api_status,
+                         'caliber_version':(CREATE_CALIBER_REUSE if getattr(self.adapter,'session',None) is not None
+                                             else CREATE_CALIBER_ONE_OFF),
                          'method':self.case.method_id,'repeat':self.case.repeat_id,'product':self.case.product,
                          'completion_kind':self.case.completion.endpoint,
                          'clock_domain':report.get('clock_domain'),'fixture_id':self.case.fixture_ref,
@@ -751,6 +771,7 @@ class BenchSession:
         if manifest['case_id']!=self.case.work_id or any(manifest['metadata'].get(k)!=v for k,v in {
                 'case_hash':self.case.digest(),'plan_ref':self.case.plan_ref,'contract_ref':self.case.contract_ref}.items()):
             raise ValueError('sealed evidence does not belong to current work/contract')
+        self.close()
         return {'status':'completed','artifact_ref':'evidence/case_manifest.json','manifest':manifest}
 
     async def reconcile(self,step_id=None,*,discover=False):

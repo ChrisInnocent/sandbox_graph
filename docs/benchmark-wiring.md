@@ -220,3 +220,15 @@ collector 文档须有匹配 environment_ref、product、product_version、autho
 - `endpoint.poll_interval_adequate(readiness_signal, poll_interval_s, max_interval_s=0.005)`：`poll_state` 入口要求 `0 < poll_interval_s <= 0.005s`；
 - `validate_endpoint_declaration` 对异步创建一并校验，过粗 → `runner case` 预检 `blocked`（`endpoint_poll_too_coarse`）；
 - 同步入口（`readiness_signal='none'`）不做此校验。
+
+### 创建时延的客户端口径（RT-47 / BCD-18）
+
+为与 Cube 官方 `examples/cube-bench` 和 AgentENV E2B 基准可比，客户端默认：
+
+- **连接复用**：`BenchSession` 默认建 run 级 `Session`（按 `(scheme,host,port)` keep-alive）；可用 `connection_reuse: false` 关闭，或 `http_pool: {max_per_host, idle_timeout_s}` 调整。**不要**每请求新建连接（握手会计入时延）。
+- **响应头停表**：同步创建时延 = `api_headers_s`（响应头到达）；`body_read_s = api_complete_s - api_headers_s` **单列**，不计入创建时延。
+- **预热**：`sandbox_bench.measure.warmup(adapter, count, ...)` 建立并复用连接，**排除在统计外**（等价官方 `RunWarmup`）。
+- **口径版本**：`caliber_version` = `create.header_stop.reuse.warmup.v1`（复用）/ `create.header_stop.oneoff.v1`（单次）。它进入**可比性键**；不同口径的样本不可比，不得混成一个创建时延结论。
+- 异步入口（Kuasar 数据面）仍轮询到目标状态停表，且轮询间隔须足够密（见 #5 校验）。
+
+测试：`tests/benchmark/unit/test_create_caliber.py`（BCT-14）。

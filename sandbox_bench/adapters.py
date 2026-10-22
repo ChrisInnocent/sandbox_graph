@@ -64,8 +64,9 @@ def _mint_cluster_key(api_secret, *, now=None, nonce=None):
 
 
 class Adapter:
-    def __init__(self, config):
+    def __init__(self, config, *, session=None):
         self.config = copy.deepcopy(config)
+        self.session = session
         self.product = config.get("product")
         if self.product not in ("agentenv", "cubesandbox", "kuasar"):
             raise ValueError("unsupported product")
@@ -126,6 +127,13 @@ class Adapter:
         return {"topology": topology, "management_plane_present": declared,
                 "evidence": "declared"}
 
+    def _http(self, method, url, *, body=None, headers=None, timeout, on_chunk=None):
+        """run 级连接复用（官方口径）时走 Session；否则单次连接。"""
+        if self.session is not None:
+            return self.session.request(method, url, body=body, headers=headers, timeout=timeout,
+                                        on_chunk=on_chunk)
+        return request(method, url, body=body, headers=headers, timeout=timeout, on_chunk=on_chunk)
+
     def _control(self, method, path, timeout, body=None, *, sandbox_id=None):
         encoded = None if body is None else json.dumps(body, allow_nan=False).encode()
         headers = dict(self.headers)
@@ -134,8 +142,8 @@ class Adapter:
             if not key:
                 raise ValueError("cluster request for an unknown sandbox has no route key")
             headers["X-Kuasar-Route-Key"] = key
-        return request(method, self.api_url + path, body=encoded,
-                       headers=headers, timeout=timeout)
+        return self._http(method, self.api_url + path, body=encoded,
+                          headers=headers, timeout=timeout)
 
     def create(self, run_id, timeout):
         source = self.config["source"]
@@ -210,10 +218,10 @@ class Adapter:
         def observe_event(kind):
             boundaries.setdefault(kind, time.monotonic() - started)
         decoder = ConnectDecoder(on_event=observe_event)
-        response = request("POST", self.data_url + "/process.Process/Start",
-                           body=encode_connect({"process": {"cmd": "/bin/sh", "args": ["-c", command]},
-                                                "stdin": False}),
-                           headers=headers, timeout=timeout, on_chunk=decoder.feed)
+        response = self._http("POST", self.data_url + "/process.Process/Start",
+                              body=encode_connect({"process": {"cmd": "/bin/sh", "args": ["-c", command]},
+                                                   "stdin": False}),
+                              headers=headers, timeout=timeout, on_chunk=decoder.feed)
         content_type = response.headers.get("content-type", "").split(";")[0].strip()
         if content_type != "application/connect+json":
             raise TransportError("unexpected command response content type")
