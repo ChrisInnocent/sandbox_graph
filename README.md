@@ -29,7 +29,19 @@
 
 ### 环境检查与配置实现进度
 
-环境适配 OpenSpec change 已完成一部分通用底层：声明/报告/动作契约、SSH transport、访问与主机探测、密钥和鉴权处理、配置文件原子事务、修复计划、受限动作执行接口、远端操作 journal，以及 Linux 进程 inventory。对应任务进度、验证边界和未实现清单见 [环境适配实现进度](docs/environment-adapters.md) 与 [OpenSpec tasks](openspec/changes/implement-sandbox-environment-adapters/tasks.md)。
+环境适配 OpenSpec change 已完成一部分通用底层：声明/报告/动作契约、SSH transport、访问与主机探测、密钥和鉴权处理、配置文件原子事务、修复计划、受限动作执行接口、远端操作 journal，以及 Linux 进程 inventory。对应任务进度、验证边界和未实现清单见 [环境适配实现进度](docs/environment-adapters.md) 与 [OpenSpec tasks](openspec/changes/implement-sandbox-environment-adapters/tasks.md)（当前 **22/65**）。
+
+**这两类节点各自做什么**（职责与判据详见 [环境适配实现进度 · 现状](docs/environment-adapters.md)）：
+
+| 节点 | 做什么 | 判据 |
+|---|---|---|
+| **E1 connect** | 只读连接/认证/身份核验 | 任一失败 → `blocked`+`GB` |
+| **E2 inspect** | 按角色核验组件与有效配置 | `check`→`T8`；`satisfied`→`T0`；`drift`→`C1`；否则 `GB` |
+| **C1 plan_changes** | 由 drift + 冻结 plan 成计划并锁冲突域 | 缺已验证适配或 `check-only` → `blocked` |
+| **C2 apply** | 提交**注册脚本**操作（不执行任意命令） | 非 `terminal+authoritative` → `blocked`/`GB` |
+| **C3 verify** | **独立复检**，通过释放域否则隔离 | 复检通过才 `→T0` |
+
+**红线**：测量运行中 **E1/E2 必经**；**C1–C3 仅在 drift 时触发**；`check-only` 不允许配置。
 
 **这不是可直接执行的三产品环境准备能力。** CubeSandbox、Kuasar、AgentENV 的产品级环境检查、配置/安装/修复适配，以及环境图/CLI 接线尚未完成；当前没有能够自动完成三种沙箱环境检查和配置的端到端入口。不要据此对真实节点执行安装或宣称环境 ready。
 
