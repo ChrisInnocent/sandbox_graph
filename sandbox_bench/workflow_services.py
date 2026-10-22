@@ -216,8 +216,10 @@ class AnalysisReportServices:
                    'analysis_input_ref': record['analysis_input_ref'], 'files': export['files'],
                    'gaps': record['gaps'], 'interpretation_status': 'not_requested'}, immutable=True)
         return NodeResult(execution_status='succeeded',
-                          artifact_refs=(export['files']['report.md']['artifact_id'],),
-                          output={'report_facts_ref': facts_ref, 'analysis_ref': identity})
+                          artifact_refs=tuple(ref['artifact_id'] for _,ref in sorted(export['files'].items())),
+                          output={'report_facts_ref': facts_ref, 'analysis_ref': identity,
+                                  'files': export['files'],
+                                  'excel_ref': export['files'].get('facts.xlsx',{}).get('artifact_id')})
 
     async def archive(self, context):
         identity = context.input_refs['analysis_ref']

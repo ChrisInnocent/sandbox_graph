@@ -95,6 +95,12 @@ async def test_frozen_cases_flow_through_analysis_excel_report_and_archive(tmp_p
     with repo.transaction() as tx:
         assert tx.get('receipts',result['result_refs']['F4'])['body']['result']['output']['archive_status']=='complete'
         assert len(tx.scan('archives'))==1
+        # F1 must also expose the Excel so it is discoverable before F4 closes.
+        f1=tx.get('receipts',result['result_refs']['F1'])['body']['result']
+        excel_id=export['files']['facts.xlsx']['artifact_id']
+        assert f1['output']['excel_ref']==excel_id
+        assert excel_id in f1['artifact_refs']
+        assert excel_id in tx.scan('archives')[0]['body']['artifact_refs']
 
 
 def test_frozen_delivery_path_and_digest_are_checked(tmp_path):
