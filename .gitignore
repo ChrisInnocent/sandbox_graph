@@ -20,3 +20,9 @@
 /.pytest_cache/
 *.egg-info/
 /artifacts/
+
+# Local mock run output
+/local-mock-run/
+/graph-viz/
+/agent-wiring-demo/
+/laptop-density-run/

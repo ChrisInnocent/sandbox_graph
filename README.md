@@ -122,6 +122,27 @@ python3 -m venv .venv
 
 `selection.json` 的结构与合成示例见 [部署与恢复](docs/orchestration/setup.md)。支持按环境组、沙箱类型、优先级和测试用例等条件选择，依赖和能力仍需校验。预览不会提交远端实验。
 
+**想先离线看整条图工程跑起来**（不需真实产品/数据库，生成测量数据与 Excel）：
+
+```bash
+.venv/bin/python scripts/local_mock_run.py --out ./local-mock-run
+# 输出：jobs/组交付/工作图 N00-N10 状态；local-mock-run/exports/facts.xlsx；
+#       local-mock-run/case-evidence/<work>/summary.json 与 raw/
+```
+
+这是 **mock 全链路**（真图/真 worker/真证据/真 Excel，假产品 API），**不是真实环境验证**。
+
+**实时查看整张图（浏览器）**：
+
+```bash
+.venv/bin/python scripts/graph_server.py              # 打开 http://127.0.0.1:8770
+# 点“运行 mock（实时）”，节点随执行实时变色
+# 接真实账本：--dsn "$SANDBOX_GRAPH_POSTGRES_DSN" --run-id <run_id>
+.venv/bin/python scripts/render_graphs.py --out ./graph-viz   # 静态：graphs.html + overview.md(Mermaid)
+```
+
+图数据直接来自代码（`sandbox_graph/viz.py` 读 `workflows.py` 的 `*_definition()` 与 `build_work`），不会与实现脱节。
+
 **若只差 Excel 文件**：分析阶段 A4 已经生成 `facts.xlsx`；归档（F4）被阻塞时文件仍存在。可直接导出（只读，需 `SANDBOX_GRAPH_POSTGRES_DSN` 与产物库根目录）：
 
 ```bash
