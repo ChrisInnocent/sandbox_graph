@@ -21,13 +21,14 @@ class Activation(Model):
     continuation_of: str | None = None
 
 class Driver:
-    def __init__(self,repository,handlers,saver_factory,graph_builder,owner='worker',*,handler_factory=None):
+    def __init__(self,repository,handlers,saver_factory,graph_builder,owner='worker',*,handler_factory=None,agent_allowlists=None):
         self.repository=repository
         self.handlers=handlers
         self.saver_factory=saver_factory
         self.graph_builder=graph_builder
         self.owner=owner
         self.handler_factory=handler_factory
+        self.agent_allowlists=dict(agent_allowlists or {})
 
     @staticmethod
     def _validate_decision(decision,interrupts):
@@ -81,7 +82,7 @@ class Driver:
             saver=self.saver_factory(token)
             if saver is None: raise ValueError('persistent saver is required; no implicit memory fallback')
             handlers=self.handler_factory(token,activation) if self.handler_factory else self.handlers
-            executor=NodeExecutor(self.repository,handlers,token)
+            executor=NodeExecutor(self.repository,handlers,token,allowlists=self.agent_allowlists)
             graph=self.graph_builder(executor,checkpointer=saver)
             config={'configurable':{'thread_id':activation.thread_id,'checkpoint_ns':''},'recursion_limit':activation.recursion_limit}
             state={'thread_id':activation.thread_id,'scope':activation.scope,'run_ref':activation.run_id,'plan_ref':activation.plan_ref,'graph_ref':activation.graph_ref,'activation_id':activation.activation_id,'input_refs':dict(activation.input_refs),'result_refs':{},'results':{},'node_visits':{}}

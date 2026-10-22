@@ -87,7 +87,7 @@ async def test_registered_recompute_is_consumed_by_real_analysis_graph(tmp_path)
         assert tx.get('rework_results',ref)['body']['status']=='complete'
         assert len(tx.scan('analysis_results'))==1 and len(tx.scan('analysis_exports'))==1
         assert not tx.scan('operations')
-        assert all(job['body']['job_kind'] in {'analysis','report','run'} for job in tx.scan('jobs'))
+        assert all(job['body']['job_kind'] in {'analysis','report','run','supervision'} for job in tx.scan('jobs'))
 
 
 def test_root_rework_does_not_dispatch_measurement_groups_before_r6(repository):

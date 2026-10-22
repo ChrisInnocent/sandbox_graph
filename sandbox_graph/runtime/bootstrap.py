@@ -2,13 +2,16 @@
 from ..graphs.factory import build_work,build_definition
 from ..services.workflows import (WorkflowHandlers,run_definition,run_routers,
     group_definition,group_routers,analysis_definition,report_definition,linear_routers)
-from .worker import GraphJobHandler,ResumeJobHandler,RecoveryJobHandler
+from .agents import AgentGateway,AgentSupervisor
+from .worker import GraphJobHandler,ResumeJobHandler,RecoveryJobHandler,SupervisionJobHandler
 
 
 def build_job_handlers(repository,*,graph_ref,saver_factory,node_service_factory,
                        review_service,deadline,lease_seconds,segment_seconds,
                        owner='worker',max_work_concurrency=1,
-                       delivery_finalizer=None,operation_service=None):
+                       delivery_finalizer=None,operation_service=None,
+                       agent_gateway=None,agent_allowed_fields=(),agent_budget=None,agent_allowlists=None,
+                       agent_fields_by_node=None,agent_accessible_evidence=()):
     """Build all five graphs for one immutable deployed graph version.
 
     node_service_factory(token, activation) supplies registered environment,
@@ -32,11 +35,15 @@ def build_job_handlers(repository,*,graph_ref,saver_factory,node_service_factory
         def builder(executor,checkpointer,definition=definition,routers=routers):
             return build_definition(definition,executor,routers=routers,checkpointer=checkpointer)
         handlers[kind]=GraphJobHandler(repository,builder,saver_factory,factory,
-            lease_seconds=lease_seconds,segment_seconds=segment_seconds,owner=owner)
+            lease_seconds=lease_seconds,segment_seconds=segment_seconds,owner=owner,
+            agent_allowlists=agent_allowlists)
     handlers['work']=GraphJobHandler(repository,build_work,saver_factory,factory,
         lease_seconds=lease_seconds,segment_seconds=segment_seconds,owner=owner,
-        delivery_finalizer=delivery_finalizer)
+        delivery_finalizer=delivery_finalizer,agent_allowlists=agent_allowlists)
     handlers['resume']=ResumeJobHandler(repository,handlers)
+    supervisor=AgentSupervisor(repository,agent_gateway)
+    handlers['supervision']=SupervisionJobHandler(supervisor,allowed_fields=agent_allowed_fields,budget=agent_budget,
+        accessible_evidence=agent_accessible_evidence,fields_by_node=agent_fields_by_node)
     if operation_service is not None:
         recovery=RecoveryJobHandler(repository,operation_service,lease_seconds=lease_seconds,owner=owner)
         handlers.update(cleanup=recovery,reconcile=recovery)

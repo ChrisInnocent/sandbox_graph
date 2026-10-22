@@ -21,7 +21,7 @@ class WorkerPolicy(Model):
     max_outbox_per_tick: int = Field(default=100,gt=0)
 
 class GraphJobHandler:
-    def __init__(self,repository,graph_builder,saver_factory,handler_factory,*,lease_seconds,segment_seconds,owner='worker',delivery_finalizer=None):
+    def __init__(self,repository,graph_builder,saver_factory,handler_factory,*,lease_seconds,segment_seconds,owner='worker',delivery_finalizer=None,agent_allowlists=None):
         self.repository=repository
         self.graph_builder=graph_builder
         self.saver_factory=saver_factory
@@ -30,12 +30,13 @@ class GraphJobHandler:
         self.segment_seconds=segment_seconds
         self.owner=owner
         self.delivery_finalizer=delivery_finalizer
+        self.agent_allowlists=dict(agent_allowlists or {})
     async def __call__(self,job):
         payload=job['payload']
         activation=Activation(activation_id=job['activation_id'],run_id=job['run_id'],thread_id=job['thread_id'],scope=job['scope_ref'],plan_ref=payload['plan_ref'],graph_ref=payload['graph_ref'],input_refs={k:str(v) for k,v in payload.items() if k not in {'plan_ref','graph_ref','continuation_of','decision'}},lease_seconds=self.lease_seconds,segment_seconds=self.segment_seconds,continuation_of=payload.get('continuation_of'))
         with self.repository.transaction() as tx:
             tx.put('activation_jobs',activation.activation_id,{'job_kind':job['job_kind'],'run_id':job['run_id'],'job_id':job['job_id']},immutable=True)
-        driver=Driver(self.repository,{},self.saver_factory,self.graph_builder,self.owner,handler_factory=self.handler_factory)
+        driver=Driver(self.repository,{},self.saver_factory,self.graph_builder,self.owner,handler_factory=self.handler_factory,agent_allowlists=self.agent_allowlists)
         result=await driver.start(activation,decision=payload.get('decision'))
         return await self.finalize(job,result)
     async def finalize(self,job,result):
@@ -97,7 +98,7 @@ class ResumeJobHandler:
             handler=self.graph_handlers.get(Worker._job_kind(metadata['body']['job_kind']))
             if not isinstance(handler,GraphJobHandler):
                 return {'execution_status':'blocked','error':{'code':'ADAPTER_MISSING','reason':'original graph version handler unavailable'}}
-        driver=Driver(self.repository,{},handler.saver_factory,handler.graph_builder,handler.owner,handler_factory=handler.handler_factory)
+        driver=Driver(self.repository,{},handler.saver_factory,handler.graph_builder,handler.owner,handler_factory=handler.handler_factory,agent_allowlists=handler.agent_allowlists)
         result=await driver.resume(identity,decision=job['payload'].get('decision'))
         finalized=await handler.finalize(original['body'],result)
         return finalized|{'resumed_job_id':original['key']}
@@ -233,6 +234,16 @@ class Worker:
                         for lease in tx.scan('resource_leases'):
                             if lease['body']['scope']==body['scope']:
                                 tx.put('resource_leases',lease['key'],lease['body']|{'status':'quarantine','reason':'wait deadline expired'})
+                    elif kind=='agent_supervision':
+                        run=tx.get('runs',body['run_ref'])
+                        identity=str(uuid4())
+                        TaskBackend.enqueue_in(tx,JobSpec(job_id=identity,job_kind='supervision',
+                            scope_ref=body['owner_agent_id'],
+                            thread_id=f'agent:{canonical_hash(body["owner_agent_id"])}',
+                            activation_id=str(uuid4()),dedupe_key=f'supervision:{row["key"]}',due_at=tx.now,
+                            deadline=tx.now+self.policy.job_seconds,run_id=body['run_ref'],
+                            dispatch_generation=run['body']['dispatch_generation'] if run else 1,
+                            payload={'owner_agent_id':body['owner_agent_id']}))
                     elif kind in {'job_ready','node_result'} or 'aggregate_id' in body or row['key'].startswith('wakeup:'):
                         pass
                     else:
@@ -289,6 +300,20 @@ class Worker:
             if not await self.run_once():
                 try: await asyncio.wait_for(stop_event.wait(),timeout=self.policy.poll_seconds)
                 except TimeoutError: pass
+
+class SupervisionJobHandler:
+    """WF-04：owner agent 消费看护记录（有模型出提案，无模型显式记缺口），不轮询。"""
+    def __init__(self,supervisor,*,allowed_fields=(),budget=None,accessible_evidence=(),fields_by_node=None):
+        self.supervisor=supervisor;self.allowed_fields=set(allowed_fields);self.budget=budget
+        self.accessible_evidence=set(accessible_evidence);self.fields_by_node=fields_by_node
+    async def __call__(self,job):
+        owner=job['payload']['owner_agent_id']
+        if self.budget is None:
+            return {'execution_status':'blocked','error':{'code':'CONTRACT_MISSING','reason':'agent context budget required'}}
+        decisions=await self.supervisor.review(owner,allowed_fields=self.allowed_fields,
+            accessible_evidence=self.accessible_evidence,budget=self.budget,fields_by_node=self.fields_by_node)
+        return {'execution_status':'succeeded','decisions':decisions}
+
 
 class RecoveryJobHandler:
     """Finite reconcile/cancel/cleanup entrypoint; unknown effects stay isolated."""

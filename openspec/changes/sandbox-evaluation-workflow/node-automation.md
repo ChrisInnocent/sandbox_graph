@@ -15,7 +15,11 @@ S 是**应当脚本化的职责**，不是完成声明。实现状态独立使�
 
 脚本合同 ID 是逻辑能力名称，不是已存在文件或可执行命令。后续可将多个合同放在同一工具内，或一个合同调用多个适配器；不得为凑表而逐行创建脚本文件。纯规则节点不调用模型；每个工作节点仍有负责 agent，看护以事件驱动，不是持续模型轮询。
 
-> **实现现状（勿与设计混淆）**：工作节点**确实被执行**——`build_job_handlers` 注册 `work` 图（`build_work`），worker 消费 `job_kind='work'` 并运行 N00–N10；但节点 handler 来自 `node_service_factory` 注册的**确定性脚本适配器**，**不调用模型**。`owner_agent_id` 只是 `WorkInstance`/`NodeContext` 的**记账标识**（`NodeExecutor` 填 `f'{scope}/{node_id}'`），不是 agent 进程。`runtime/agents.py` 的 `AgentGateway`/`ModelGateway`/`DiagnosisProposal` 仅有接口与预算/提案校验，**无生产接线**；仓库也**没有真实模型实现**（只有 `Protocol` 与测试 `SpyModel`）。因此“每个工作节点一个 agent 接管”目前**是设计，不是已实现**。图对工作的 fanout 是**持久 work job**（`SchedulingService.dispatch_work`，`job_kind='work'`，受 `max_work_concurrency` 限制），**并非 sub-agent fanout**。
+> **实现现状（勿与设计混淆）**：工作节点**确实被执行**——`build_job_handlers` 注册 `work` 图（`build_work`），worker 消费 `job_kind='work'` 并运行 N00–N10；节点 handler 来自 `node_service_factory` 注册的**确定性脚本适配器**，不调用模型。
+>
+> **WF-04 三级 owner agent（已接线）**：`runtime/agents.py` 提供 `node_agent_level`/`agent_id_for`/`owner_agent_for`；`NodeExecutor` 为每个节点写入真实 owner 身份（root/group/work，未注册节点退化为节点级身份）。**节点 agent 层**：`runtime/node_agent.py` 的 `NodeAgent` 包装每个节点的执行——只将**职责内的输入**（部署配置 `agent_allowlists`，越界即拒，不静默扩大范围）交给注册脚本，调用脚本得到结果，做**规则复审**并写 `node_reviews`（findings/decision）；复审**不覆盖**下级执行事实。脚本执行保持确定性（同一输入同一结果）。节点非成功（`failed`/`blocked`）时写 `agent_supervision` 记录并发出 `agent_supervision` 事件；`Worker.pump_outbox` 据此入队 `supervision` job；`SupervisionJobHandler` + `AgentSupervisor` 按 owner agent 消费：**有模型网关时产出经校验的提案，无模型时显式记 `model_unavailable`**，均只写 `agent_reviews`，不改测量值/资源/下级事实。看护为**账本/事件驱动，不轮询**（符合 WF-04 Scenario）。
+>
+> `AgentGateway`/`ModelGateway` 的**真实模型实现仍需部署层提供**（仓库只有 `Protocol` 与测试假模型）；未提供时 supervisor 记 `model_unavailable`，不会伪造判断。图对工作的 fanout 仍是**持久 work job**（受 `max_work_concurrency` 限制），不是把任务交给模型。
 
 ## 2. 每个节点都要有的合同
 
