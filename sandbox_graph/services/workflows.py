@@ -7,6 +7,7 @@ the registered benchmark bridge.
 from uuid import uuid4
 from langgraph.graph import END
 from ..domain.models import NodeResult,ErrorRecord,DeliveryManifest,EvidenceRef,canonical_hash
+from .reviews import ReanalysisBudgetExhausted
 from ..planning.compiler import Plan
 from ..persistence.repository import LeaseToken,Conflict
 from ..runtime.tasks import TaskBackend,JobSpec
@@ -22,8 +23,9 @@ def blocked(code,message,scope=()):
 def token_for(context): return LeaseToken(context.thread_id,context.owner_epoch,context.lease_id,0)
 
 class WorkflowHandlers:
-    def __init__(self,repository,*,deadline,node_services=None,review_service=None,max_work_concurrency=1):
+    def __init__(self,repository,*,deadline,node_services=None,review_service=None,max_work_concurrency=1,max_analysis_revisions=5):
         self.repository=repository;self.deadline=deadline;self.node_services=dict(node_services or {});self.review_service=review_service;self.max_work_concurrency=max_work_concurrency
+        self.max_analysis_revisions=max_analysis_revisions
         self.scheduler=SchedulingService(repository,review_service=review_service)
     def mapping(self):
         handlers={'R0':self.restore_run,'R1':self.validate_catalog,'RP':self.restore_plan,'R2':self.dispatch_groups,'R3':self.ingest_deliveries,'R6':self.compile_rework,'R7':self.park_run,
@@ -78,7 +80,12 @@ class WorkflowHandlers:
             key=f'{delivery["delivery_id"]}:{delivery["version"]}'
             allowed={scope}|set(sources[key]['work_refs'])
             self.review_service.review_delivery(DeliveryManifest.model_validate(delivery),expected_scope=scope,plan_ref=context.plan_ref,contract_ref=plan.contract_ref,allowed_evidence_scopes=allowed)
-        frozen=self.review_service.freeze_analysis(context.plan_ref,{scope:(d['delivery_id'],d['version']) for scope,d in newest.items()},rules_ref=context.input_refs.get('rules_ref','manifest:1'),missing_scope=sorted({c.group_id for c in plan.cases}-set(newest)),source_kind='group_deliveries')
+        try:
+            frozen=self.review_service.freeze_analysis(context.plan_ref,{scope:(d['delivery_id'],d['version']) for scope,d in newest.items()},rules_ref=context.input_refs.get('rules_ref','manifest:1'),missing_scope=sorted({c.group_id for c in plan.cases}-set(newest)),source_kind='group_deliveries',max_revisions=self.max_analysis_revisions)
+        except ReanalysisBudgetExhausted as exc:
+            return blocked('REANALYSIS_BUDGET_EXHAUSTED',str(exc))
+        # F4 待补②：新冻结后把同 plan 旧分析的未领取 report job 显式标为 superseded。
+        self.review_service.supersede_stale_reports(context.plan_ref,frozen)
         with self.repository.transaction() as tx:
             tx.assert_fence(token_for(context))
             dedupe=f'analysis:{context.run_ref}:{frozen}'

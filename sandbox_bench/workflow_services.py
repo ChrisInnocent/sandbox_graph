@@ -9,7 +9,7 @@ from pathlib import Path, PurePosixPath
 import tempfile
 from uuid import uuid4
 
-from sandbox_graph.domain.models import DeliveryManifest, EvidenceRef, NodeResult, canonical_hash
+from sandbox_graph.domain.models import DeliveryManifest, EvidenceRef, ErrorRecord, NodeResult, canonical_hash
 from sandbox_graph.persistence.repository import Conflict
 from sandbox_graph.runtime.tasks import JobSpec, TaskBackend
 from sandbox_graph.services.closure import ClosureService
@@ -238,8 +238,24 @@ class AnalysisReportServices:
                 return blocked('VERSION_CONFLICT', 'archive plan is no longer active')
             # A newer delivery/review must produce a new analysis before closure.
             current = tx.get('analysis_dirty', context.plan_ref)
-            if not current or current['body'].get('dirty') or current['body'].get('input_ref') != record['analysis_input_ref']:
-                return blocked('ANALYSIS_STALE', 'new evidence requires analysis')
+            frozen_ref = current['body'].get('input_ref') if current else None
+            if not current or current['body'].get('dirty') or frozen_ref != record['analysis_input_ref']:
+                # issue #2 P1：若有更新且已完成的分析，本报告被取代（不终态阻塞）；
+                # 否则给出**有界可重试**的显式缺口（reconcile），让新分析完成后重跑 F4。
+                newer = frozen_ref is not None and frozen_ref != record['analysis_input_ref'] and any(
+                    r['key'] != identity and r['body'].get('plan_ref') == context.plan_ref
+                    and r['body'].get('analysis_input_ref') == frozen_ref
+                    for r in tx.scan('analysis_results'))
+                if newer:
+                    return NodeResult(execution_status='cancelled',
+                        output={'superseded_by_input_ref': frozen_ref,
+                                'analysis_input_ref': record['analysis_input_ref']})
+                return NodeResult(execution_status='blocked', coverage_status='blocked',
+                    error=ErrorRecord(code='ANALYSIS_STALE', retry_class='reconcile', observed_at=0,
+                        message='newer frozen analysis input requires re-analysis before closure'),
+                    output={'analysis_input_ref': record['analysis_input_ref'],
+                            'frozen_input_ref': frozen_ref, 'reanalysis_required': True,
+                            'analysis_dirty': bool(current and current['body'].get('dirty'))})
             work = [r['body'] for r in tx.scan('work_instances')
                     if r['body']['run_id'] == context.run_ref and r['body']['plan_ref'] == context.plan_ref]
             scopes = {}

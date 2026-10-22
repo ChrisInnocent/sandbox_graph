@@ -70,3 +70,38 @@ finalize = delivery_finalizer(
 ```
 
 有效期是经确认的策略输入，代码不替用户设定。只有成功且数据有效的交付才封存 `reuse_contract` 和策略附件。规格、完成终点、方法版本及观测时钟来自实际会话；脚本和条件身份必须匹配注册 WorkKey。`RegisteredBenchmarks` 持久保存 `measurement_bindings`；测量合同摘要包括全部 CaseContract 参数，仅排除 work/group/plan/contract 四个图身份字段。因此同名模板变更并发、缓存、来源或产品版本也不能沿用旧证据；重复轮次同样分开。缺少生产者绑定、原始字节、明确源作用域授权或有效期证明时，保留缺口。
+
+## F4 `ANALYSIS_STALE`：根因与处置（issue #2 P1）
+
+### 数据流
+- `review_delivery`（R3 每次收到新的组交付后评审）→ 失败/变化时置 `analysis_dirty[plan_ref].dirty=True`；
+- `freeze_analysis`（R3 冻结）→ `analysis_dirty[plan_ref]={dirty:False, input_ref:<manifest>}`，并按 manifest 去重入队一个 `analysis` job；
+- A3 `calculate` 记录 `analysis_results[<ref>].analysis_input_ref=<manifest>`；
+- **F4 `archive`** 要求 `analysis_dirty[plan_ref].input_ref == record.analysis_input_ref` 且 `dirty=False`。
+
+### 两种触发
+1. **迟到证据**：A7 冻结分析之后又收到新组交付并被评审 → `dirty=True`；
+2. **重复 freeze（版本错位）**：R3 因交付集合变化**再次** freeze → `analysis_dirty.input_ref` 变成**新 manifest**，而 A3 的记录仍是**旧 manifest** → 不匹配。
+
+### 为什么曾经是死锁
+`blocked('ANALYSIS_STALE', …)` 的 `ErrorRecord.retry_class` 默认 `never`，属**终态**；虽然 R3 已为新 manifest 入队新 analysis（其 A7 会再生成新 report job），但**旧 report 的 F4 已终态**，run 的收口可能按旧结果算完 → 表现为"归档 partial 且不再推进"。
+
+### 已实施（有界 + 取代）
+- **有更新且已完成的分析**（同 plan 且 `analysis_input_ref == frozen_ref` 的 `analysis_results`）→ 旧 F4 返回 `cancelled` + `output.superseded_by_input_ref`，**不再阻塞**，由新报告继续；
+- **否则** → `blocked` 但 `retry_class='reconcile'` + `output{analysis_input_ref, frozen_input_ref, reanalysis_required, analysis_dirty}` → 可在新分析完成后**重驱**，不再 `never` 终态。
+- 测试：`tests/benchmark/integration/test_analysis_graph.py` 的两条（stale 可重试、被更新分析取代）。
+
+### 已补（本轮）
+- **重分析预算**：`ReviewService.freeze_analysis(max_revisions=…)` 按不同冻结清单计数（`analysis_generations`），超限抛 `ReanalysisBudgetExhausted` → R3 返回 `blocked('REANALYSIS_BUDGET_EXHAUSTED')`（`WorkflowHandlers.max_analysis_revisions` 默认 5）；同一清单幂等不计数（防活锁）。
+- **R3 与新分析协调**：`ReviewService.supersede_stale_reports(plan_hash, current_input_ref)` 把同 plan 旧分析的**未领取** report job 标 `cancelled`（reason `superseded_by_new_freeze`）；R3 在冻结后调用；运行中的仍由 F4 自判返回 `cancelled`。
+- 测试：预算计数/幂等/超限与 supersede 只碰 `pending`、不动当前分析（`tests/benchmark/integration/test_analysis_graph.py`）。
+
+### 诊断配方（无账本时定位是哪一种）
+```sql
+SELECT key, body FROM orchestration_records WHERE kind='analysis_dirty';
+SELECT key, body FROM orchestration_records WHERE kind='analysis_inputs';
+SELECT key, body FROM orchestration_records WHERE kind='analysis_results';
+SELECT key, body FROM orchestration_records WHERE kind='reviews' ORDER BY key;
+```
+- `analysis_dirty.dirty=true` → 是第 1 种（迟到评审）；
+- `analysis_dirty.dirty=false` 但 `input_ref != analysis_results.analysis_input_ref` → 是第 2 种（重复 freeze 错位）。

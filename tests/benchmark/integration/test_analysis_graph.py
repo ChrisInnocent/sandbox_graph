@@ -181,3 +181,90 @@ def test_accepted_reuse_materializes_original_seal_once_and_preserves_both_alias
     assert len(facts['cases'])==1 and facts['cases'][0]['success_samples']==1
     assert facts['case_aliases']['alias-a']['case_id']=='case-ga'
     assert json.loads((paths[0]/'case_manifest.json').read_bytes())['metadata']['plan_ref']=='plan1'
+
+
+@pytest.mark.asyncio
+async def test_archive_stale_is_actionable_and_bounded_not_terminal(tmp_path):
+    """F4 遇到新增证据导致的 stale：给出可重试(reconcile)的显式缺口，而不是终态。"""
+    repo,store,reviews,frozen = setup(tmp_path)
+    services = AnalysisReportServices(repo,reviews,store,deadline=1100)
+    handlers = WorkflowHandlers(repo,deadline=1100,node_services=services.mapping(),review_service=reviews).mapping()
+    lease = LeaseService(repo).acquire_thread('analysis','worker',50)
+    definition = analysis_definition()
+    graph = build_graph(definition,NodeExecutor(repo,handlers,lease),routers=linear_routers(definition.nodes))
+    state = {'thread_id':'analysis','scope':'r','run_ref':'r','plan_ref':'plan1','graph_ref':'graph1',
+             'activation_id':'a','input_refs':{'analysis_input_ref':frozen}}
+    await graph.ainvoke(state)
+    with repo.transaction() as tx:
+        job = tx.scan('jobs')[0]['body']
+        tx.put('analysis_dirty','plan1',{'dirty':True,'delivery_ref':'late:1'})
+    lease = LeaseService(repo).acquire_thread(job['thread_id'],'worker',50)
+    definition = report_definition()
+    graph = build_graph(definition,NodeExecutor(repo,handlers,lease),routers=linear_routers(definition.nodes))
+    result = await graph.ainvoke({**state,'thread_id':job['thread_id'],'activation_id':job['activation_id'],
+                                 'input_refs':job['payload']})
+    assert result['results']['F4']['execution_status']=='blocked'
+    with repo.transaction() as tx:
+        f4 = tx.get('receipts',result['result_refs']['F4'])['body']['result']
+    assert f4['error']['code']=='ANALYSIS_STALE'
+    assert f4['error']['retry_class']=='reconcile'
+    assert f4['output']['reanalysis_required'] is True
+    assert 'frozen_input_ref' in f4['output'] and 'analysis_input_ref' in f4['output']
+
+
+@pytest.mark.asyncio
+async def test_archive_is_superseded_when_a_newer_analysis_exists(tmp_path):
+    """存在更新且已完成的分析时，旧分析的报告应被取代，而不是终态阻塞。"""
+    repo,store,reviews,frozen = setup(tmp_path)
+    services = AnalysisReportServices(repo,reviews,store,deadline=1100)
+    handlers = WorkflowHandlers(repo,deadline=1100,node_services=services.mapping(),review_service=reviews).mapping()
+    lease = LeaseService(repo).acquire_thread('analysis','worker',50)
+    definition = analysis_definition()
+    graph = build_graph(definition,NodeExecutor(repo,handlers,lease),routers=linear_routers(definition.nodes))
+    state = {'thread_id':'analysis','scope':'r','run_ref':'r','plan_ref':'plan1','graph_ref':'graph1',
+             'activation_id':'a','input_refs':{'analysis_input_ref':frozen}}
+    await graph.ainvoke(state)
+    with repo.transaction() as tx:
+        job = tx.scan('jobs')[0]['body']
+        tx.put('analysis_dirty','plan1',{'dirty':False,'input_ref':'newer-input'})
+        tx.put('analysis_results','newer',{'plan_ref':'plan1','run_id':'r','analysis_input_ref':'newer-input'})
+    lease = LeaseService(repo).acquire_thread(job['thread_id'],'worker',50)
+    definition = report_definition()
+    graph = build_graph(definition,NodeExecutor(repo,handlers,lease),routers=linear_routers(definition.nodes))
+    result = await graph.ainvoke({**state,'thread_id':job['thread_id'],'activation_id':job['activation_id'],
+                                 'input_refs':job['payload']})
+    assert result['results']['F4']['execution_status']=='cancelled'
+    with repo.transaction() as tx:
+        assert not tx.scan('archives')
+        f4 = tx.get('receipts',result['result_refs']['F4'])['body']['result']
+    assert f4['output']['superseded_by_input_ref']=='newer-input'
+
+
+def test_reanalysis_budget_bounds_repeated_freezes_and_dedupes_identical(tmp_path):
+    """F4 待补①：重分析预算按不同冻结清单计数；同一清单幂等不计数。"""
+    from sandbox_graph.services.reviews import ReanalysisBudgetExhausted
+    repo,store,reviews,frozen = setup(tmp_path)
+    deliveries={'ga':('ga',1),'gb':('gb',1)}
+    assert reviews.analysis_revisions('plan1')==1
+    reviews.freeze_analysis('plan1',deliveries,rules_ref='v2',max_revisions=2)
+    assert reviews.analysis_revisions('plan1')==2
+    reviews.freeze_analysis('plan1',deliveries,rules_ref='v2',max_revisions=2)   # 同一清单
+    assert reviews.analysis_revisions('plan1')==2
+    with pytest.raises(ReanalysisBudgetExhausted):
+        reviews.freeze_analysis('plan1',deliveries,rules_ref='v3',max_revisions=2)
+
+
+def test_new_freeze_supersedes_pending_report_of_older_analysis(tmp_path):
+    """F4 待补②：新冻结后，旧分析的未领取 report job 被显式标为 superseded。"""
+    repo,store,reviews,frozen = setup(tmp_path)
+    with repo.transaction() as tx:
+        tx.put('analysis_results','old-analysis',{'plan_ref':'plan1','run_id':'r','analysis_input_ref':'old-input'})
+        tx.put('jobs','pending-report',{'job_kind':'report','status':'pending','payload':{'analysis_ref':'old-analysis'}})
+        tx.put('analysis_results','current-analysis',{'plan_ref':'plan1','run_id':'r','analysis_input_ref':'current-input'})
+        tx.put('jobs','current-report',{'job_kind':'report','status':'pending','payload':{'analysis_ref':'current-analysis'}})
+    cancelled=reviews.supersede_stale_reports('plan1','current-input')
+    assert cancelled==['pending-report']
+    with repo.transaction() as tx:
+        assert tx.get('jobs','pending-report')['body']['status']=='cancelled'
+        assert tx.get('jobs','pending-report')['body']['result']['reason']=='superseded_by_new_freeze'
+        assert tx.get('jobs','current-report')['body']['status']=='pending'
