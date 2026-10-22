@@ -18,6 +18,10 @@ def main():
     dump.add_argument('--run-id');dump.add_argument('--analysis-ref')
     dump.add_argument('--out',type=Path,required=True)
     dump.add_argument('--artifacts-root',type=Path,default=os.environ.get('SANDBOX_GRAPH_ARTIFACTS'))
+    cases=sub.add_parser('export-cases',help='dump sealed case evidence (data/raw/resource samples) for a run')
+    cases.add_argument('--run-id',required=True)
+    cases.add_argument('--out',type=Path,required=True)
+    cases.add_argument('--artifacts-root',type=Path,default=os.environ.get('SANDBOX_GRAPH_ARTIFACTS'))
     preview=sub.add_parser('preview');preview.add_argument('input',type=Path)
     args=parser.parse_args()
     if args.command=='catalog':
@@ -42,6 +46,10 @@ def main():
             from .analysis_dump import dump_with_root
             if not args.artifacts_root: parser.error('--artifacts-root or SANDBOX_GRAPH_ARTIFACTS is required')
             result={'written':dump_with_root(repository,args.artifacts_root,out=args.out,run_id=args.run_id,analysis_ref=args.analysis_ref)}
+        elif args.command=='export-cases':
+            from .analysis_dump import dump_cases_with_root
+            if not args.artifacts_root: parser.error('--artifacts-root or SANDBOX_GRAPH_ARTIFACTS is required')
+            result={'written':dump_cases_with_root(repository,args.artifacts_root,out=args.out,run_id=args.run_id)}
         else:
             from .interfaces.service import QueryService
             result=QueryService(repository).status(args.run_id)

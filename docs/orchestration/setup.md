@@ -117,5 +117,6 @@ await worker.serve(stop_event)
 - **不会自动同步进源码目录**。要让产物出现在工程目录，只能把 `--output` 或产物库 `root` 指到工程目录（并被 git 忽略）。
 - 取回方式：
   - 分析产物（含 Excel）：`python -m sandbox_graph export-analysis --run-id <run> --artifacts-root <root> --out <dir>`。
+  - 某 run 的测量证据（数据/原始载荷/资源样本）：`python -m sandbox_graph export-cases --run-id <run> --artifacts-root <root> --out <dir>`（每个 work 一个子目录，内容为 N10 封存并经 `delivery_finalizer` 入库的同一份证据，即 A3 的输入）。
   - 用例证据：按交付输出里的 `case_index_ref` 在 store 中定位 `<scope>/<sha256>`（scope 为环境组）。
   - F4 被阻塞时，F1/`analysis_exports` 仍可定位产物；这只证明产物流水存在，**不证明交付或覆盖完整**。

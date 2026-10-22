@@ -132,6 +132,14 @@ python3 -m venv .venv
 
 写出 `facts.xlsx` / `facts.json` / `report.md` / `comparison_manifest.json`（多版本时按前 12 位分子目录）。这只取回已校验的产物，不证明交付或覆盖完整。
 
+**把一次 run 的全部测量证据（数据/原始载荷/资源样本/日志）拿回来**（就是 A3 做指标测算的输入）：
+
+```bash
+.venv/bin/python -m sandbox_graph export-cases --run-id RUN_ID \
+    --artifacts-root /path/to/artifacts --out ./case-evidence
+# 每个 work 一个子目录（多 work 时）：summary.json / summary.csv / raw/… / *.json
+```
+
 正式启动使用 `RunService.preview/start`、PostgreSQL、注册服务和 Worker，按部署文档完成装配。单机执行账本使用文件锁和持久提交意图；正式多 worker 编排使用 PostgreSQL，二者不混为已验证的同一后端。
 
 ### 5. 环境还原与指标/条件选择
