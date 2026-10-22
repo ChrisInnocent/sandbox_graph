@@ -212,3 +212,11 @@ collector 文档须有匹配 environment_ref、product、product_version、autho
 | 未审计（未知产品/缺拓扑） | 未验证 | 不强制（记原因，不猜） |
 
 原因：对同步创建声明 `STATE_READY` 会多做一次 `GET /sandboxes/{id}` inspect 往返（约 `0.1s`），把 create 时延虚高；对异步创建声明 `API_COMPLETE` 则把“受理”当“完成”。校验实现：`sandbox_bench/endpoint.py::endpoint_declaration_consistent` / `validate_endpoint_declaration`，复用 `operation_sync.completion_plan` 作为唯一审计来源。
+
+### 异步入口（仅数据面 node API）必须**密集轮询**
+
+有 router/管理面入口时，**直接测 router 的同步创建用时**即可（`API_COMPLETE`，无额外轮询）。只有在部署**没有管理面**、只能用数据面 node API（`node_direct`，返回 `starting`）时才必须轮询；而沙箱状态读数粒度粗、我们的创建是 **ms 级**，所以轮询间隔必须足够密，否则测到的是**轮询粒度**而不是创建耗时：
+
+- `endpoint.poll_interval_adequate(readiness_signal, poll_interval_s, max_interval_s=0.005)`：`poll_state` 入口要求 `0 < poll_interval_s <= 0.005s`；
+- `validate_endpoint_declaration` 对异步创建一并校验，过粗 → `runner case` 预检 `blocked`（`endpoint_poll_too_coarse`）；
+- 同步入口（`readiness_signal='none'`）不做此校验。

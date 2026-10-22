@@ -207,3 +207,31 @@ def test_validate_endpoint_declaration_blocks_only_creation_methods():
     non_creation = sample(); non_creation.update(method_id='B03.PAUSE', product='cubesandbox')
     non_creation['completion'] = dict(non_creation['completion'], endpoint='STATE_READY')
     validate_endpoint_declaration(CaseContract.model_validate(non_creation))  # 非创建类不检查
+
+
+# 用户澄清：仅数据面 node API（异步）必须轮询，但状态读数不准 + 创建是 ms 级，
+# 轮询间隔必须足够密，否则测到的是轮询粒度。
+from sandbox_bench.endpoint import poll_interval_adequate, MAX_ASYNC_POLL_INTERVAL_S
+
+
+def test_synchronous_endpoint_needs_no_poll_interval():
+    assert poll_interval_adequate('none', 60)[0] is True
+
+
+def test_async_endpoint_requires_dense_poll_interval():
+    assert poll_interval_adequate('poll_state', 0.001)[0] is True
+    ok, reason = poll_interval_adequate('poll_state', 5)
+    assert ok is False and 'quantization' in reason
+    assert poll_interval_adequate('poll_state', 0)[0] is False
+    assert poll_interval_adequate('poll_state', MAX_ASYNC_POLL_INTERVAL_S)[0] is True
+
+
+def test_validate_endpoint_declaration_blocks_coarse_poll_for_async_create():
+    from sandbox_bench.contracts import CaseContract
+    from tests.benchmark.unit.test_contract_models import sample
+    data = sample(); data.update(product='kuasar', topology='node_direct')
+    data['completion'] = dict(data['completion'], endpoint='STATE_READY', poll_interval_s=5)
+    with pytest.raises(ScenarioBlocked, match='endpoint_poll_too_coarse'):
+        validate_endpoint_declaration(CaseContract.model_validate(data))
+    data['completion'] = dict(data['completion'], poll_interval_s=0.002)
+    validate_endpoint_declaration(CaseContract.model_validate(data))   # 密集间隔通过

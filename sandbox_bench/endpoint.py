@@ -12,6 +12,8 @@ from .scenarios import ScenarioBlocked
 from .operation_sync import completion_plan
 
 _CREATION_METHOD_PREFIXES = ('B00.', 'B01.', 'B02.')
+# 异步入口（轮询）下，轮询间隔必须远小于被测创建耗时；创建是 ms 级，粗于此则测得的是轮询粒度。
+MAX_ASYNC_POLL_INTERVAL_S = 0.005
 
 _TOPOLOGIES = ('router', 'node_direct', 'co_located_cli')
 _PRODUCTS = ('cubesandbox', 'kuasar', 'agentenv')
@@ -133,8 +135,28 @@ def endpoint_declaration_consistent(product: str, topology, declared_endpoint: s
     return (True, '')
 
 
-def validate_endpoint_declaration(case) -> None:
-    """创建类用例的预检：端点声明与审计同步性不一致则 blocked（不静默规范化）。"""
+def poll_interval_adequate(readiness_signal, poll_interval_s, *, max_interval_s=MAX_ASYNC_POLL_INTERVAL_S):
+    """异步（需轮询）入口的轮询间隔是否足够密。
+
+    同步入口无需轮询；异步入口若轮询太粗（相对 ms 级创建），测得的创建时延是轮询粒度
+    而非真实耗时，必须拒绝。返回 (ok, reason)。
+    """
+    if readiness_signal != 'poll_state':
+        return (True, '')
+    if poll_interval_s is None or poll_interval_s <= 0:
+        return (False, 'poll-required endpoint needs a positive poll_interval_s')
+    if poll_interval_s > max_interval_s:
+        return (False, f'poll interval {poll_interval_s}s is coarser than the ms-level creation '
+                       f'granularity (<= {max_interval_s}s); measured latency would be polling '
+                       f'quantization, not creation time')
+    return (True, '')
+
+
+def validate_endpoint_declaration(case, *, max_poll_interval_s=MAX_ASYNC_POLL_INTERVAL_S) -> None:
+    """创建类用例的预检：端点声明与审计同步性不一致则 blocked（不静默规范化）。
+
+    异步（轮询）入口还会校验轮询间隔是否足够密（ms 级创建）。
+    """
     method = str(getattr(case, 'method_id', ''))
     if not method.startswith(_CREATION_METHOD_PREFIXES):
         return
@@ -142,3 +164,9 @@ def validate_endpoint_declaration(case) -> None:
                                                  case.completion.endpoint)
     if not ok:
         raise ScenarioBlocked('endpoint_declaration_mismatch:' + reason)
+    plan = completion_plan(case.product, 'create', topology=getattr(case, 'topology', None))
+    if plan['verified'] and plan['poll_required']:
+        ok, reason = poll_interval_adequate('poll_state', case.completion.poll_interval_s,
+                                            max_interval_s=max_poll_interval_s)
+        if not ok:
+            raise ScenarioBlocked('endpoint_poll_too_coarse:' + reason)
