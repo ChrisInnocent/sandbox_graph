@@ -9,6 +9,7 @@ import json
 import shutil
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -39,6 +40,64 @@ from sandbox_graph.viz import graph_nodes
 
 NODE_INDEX = graph_nodes()
 WORK_NODES = tuple(f'N{i:02}' for i in range(11))
+
+# 资源观测合同（脚本化采集，真走 N04/N06/N07 与 metrics/resources）
+RESOURCE_CONTRACT = {'interval_s': 0.01, 'window_s': 0.05, 'max_wait_s': 1.0,
+                     'max_gap_s': 0.05, 'min_samples': 2, 'inventory_ref': 'scripted-inventory'}
+
+
+def scripted_inventory(environment_ref):
+    return {'node': 'node-1', 'boot_id': 'boot-1', 'evidence_ref': 'scripted-inventory',
+            'processes': [
+                {'identity': {'pid': 4000 + i, 'environment': environment_ref, 'node': 'node-1',
+                              'boot_id': 'boot-1', 'start_ticks': 100 + i},
+                 'roles': ['data'], 'components': ['cube-runtime'],
+                 'sandbox_id': f's{i}', 'generation': 'gen-1',
+                 'pss_bytes': (48 + 8 * i) * 1024 * 1024, 'cpu_seconds': 0.05 + 0.01 * i}
+                for i in range(2)]}
+
+
+class ScriptedResourceSampler:
+    """脚本化采样子：产出真实形状的 resource_sample（PSS/CPU），走真封存与分析路径。"""
+    def __init__(self, processes, clock_domain, run_id):
+        self.inventory = list(processes)      # 与 ResourceSampler 一致：inventory 是进程列表
+        self.clock_domain = clock_domain
+        self.run_id = run_id
+        self.safe_to_submit = True
+        self._seq = 1          # 真采样器 next_seq 从 1 开始；records() 要求从 1 连续
+        self._pending = []
+
+    def sample_once(self):
+        now = time.monotonic()
+        seq = self._seq
+        self._seq += 1
+        processes = []
+        for item in self.inventory:
+            processes.append({**item, 'expected_identity': item['identity'], 'ended_s': now,
+                              'pss_bytes': item['pss_bytes'], 'cpu_seconds': item['cpu_seconds'] + seq * 0.01})
+        row = {'schema_version': 'resource_sample.v1', 'kind': 'resource_sample', 'seq': seq,
+               'sample_id': f'{self.run_id}:{seq}', 'clock_domain': self.clock_domain,
+               'started_s': now, 'ended_s': now, 't_s': now, 'processes': processes,
+               'sampler_wall_seconds': 0.0, 'sampler_cpu_seconds': 0.0,
+               'poll_requests': 0, 'renewal_requests': 0, 'inventory_complete': True,
+               'inventory_version': 'scripted:1', 'inventory_source_ref': 'scripted',
+               'snapshot_cohort_ids': [p['sandbox_id'] for p in processes]}
+        self._pending = [row]
+        return row
+
+    def reconcile(self, sink):
+        ok = all(bool(sink(row)) for row in self._pending)
+        self._pending = []
+        return {'status': 'reconciled' if ok else 'failed'}
+
+    def close(self):
+        return None
+
+
+async def scripted_steady(sampler, resources):
+    """脚本化稳态检查：返回已达成稳态窗口（真代码会读采样序列判稳）。"""
+    return {'status': 'completed', 'window_kind': 'steady', 'samples': max(1, resources.min_samples),
+            'clock_domain': sampler.clock_domain}
 
 
 def snapshot_status(repo):
@@ -83,11 +142,34 @@ class EnvironmentFixture:
 class FailedScenario(Scenario):
     async def execute(self, index):
         self.calls.append(index)
-        return OperationResult('failed', value={'operation_id': str(index), 'status': 'failed', 'elapsed_s': .1})
+        return OperationResult('failed', value={'operation_id': str(index), 'status': 'failed', 'elapsed_s': .1,
+            'completion': {'status': 'failed', 'reason': 'api_rejected', 'latency': None}})  # 被接纳前拒绝
+
+
+class MockScenario(Scenario):
+    """带争用的合成场景：并发越高单次耗时越高（合成模型，非真实产品）。
+
+    用于让规格矩阵在不同 C/Q 下产生**可区分**的格子；数值是建模出来的，不是真测量。
+    """
+    def __init__(self):
+        super().__init__()
+        self._active = 0
+
+    async def execute(self, index):
+        self.calls.append(index)
+        self._active += 1
+        try:
+            await asyncio.sleep(0.002)              # 让并发真正重叠
+            elapsed = 0.01 + 0.01 * self._active    # 基础 10ms + 每活跃实例 10ms 争用
+            return OperationResult('success', value={'operation_id': str(index),
+                'elapsed_s': round(elapsed, 4), 'status': 'success',
+                'completion': {'status': 'success', 'reason': None, 'latency': round(elapsed, 4), 'polls': []}})
+        finally:
+            self._active -= 1
 
 
 async def run_mock(progress=None, out=None, store_root=None, *, groups=2, works=2, requests=5,
-                   max_work_concurrency=2, vcpus=2, memory_bytes=2 * 1024 ** 3,
+                   concurrency=2, max_work_concurrency=2, vcpus=2, memory_bytes=2 * 1024 ** 3,
                    fail_last_group=False, on_tick=None, model_gateway=None,
                    agent_allowed_fields=(), agent_fields_by_node=None, agent_accessible_evidence=()):
     store_root = Path(store_root or tempfile.mkdtemp(prefix='sandbox-mock-store-'))
@@ -112,7 +194,8 @@ async def run_mock(progress=None, out=None, store_root=None, *, groups=2, works=
             body = sample()
             body.update(group_id=group, environment_ref='fixture:' + group, work_id='template:' + ref,
                         spec={'vcpus': vcpus, 'memory_bytes': memory_bytes},
-                        load={**sample()['load'], 'requests': requests})
+                        resources=RESOURCE_CONTRACT,
+                        load={**sample()['load'], 'requests': requests, 'concurrency': concurrency})
             config = {'product': 'kuasar', 'api_url': 'http://localhost:1', 'data_url': 'http://localhost:1',
                 'source': {'kind': body['source']['kind'], 'id': body['source']['id']},
                 'create_body': {'timeout': 100, 'metadata': {'kuasar-sandbox.resource':
@@ -133,9 +216,12 @@ async def run_mock(progress=None, out=None, store_root=None, *, groups=2, works=
 
     def session_factory(case, config, folder):
         failing = fail_last_group and case.group_id == group_names[-1]
-        scenario = FailedScenario() if failing else Scenario()
+        scenario = FailedScenario() if failing else MockScenario()
         scenarios.setdefault(case.group_id, scenario)
-        return BenchSession(case, config, folder, scenario=scenario)
+        domain = f'scripted:{case.work_id}'
+        sampler = ScriptedResourceSampler(scripted_inventory(case.environment_ref)['processes'], domain, case.work_id)
+        return BenchSession(case, config, folder, scenario=scenario, sampler=sampler,
+                            steady_check=scripted_steady, clock_domain=domain)
 
     registry = RegisteredBenchmarks(repo, gateway, templates, store_root / 'sessions', session_factory=session_factory)
     analysis = AnalysisReportServices(repo, reviews, store, deadline=3600)
