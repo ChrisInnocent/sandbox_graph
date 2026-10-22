@@ -290,6 +290,16 @@ def main(argv=None):
             from .wiring import configured_session
             case=CaseContract.model_validate_json(json.dumps(yaml.safe_load(Path(args.case).read_text())))
             config=yaml.safe_load(Path(args.config).read_text())
+            # issue #5：创建类用例声明的终点必须与实际创建的（已审核）同步性一致；
+            # 不一致则 blocked（绝不静默规范化成 API_COMPLETE 来“消除”多余的 inspect）。
+            from .endpoint import validate_endpoint_declaration
+            from .scenarios import ScenarioBlocked
+            try:
+                validate_endpoint_declaration(case)
+            except ScenarioBlocked as exc:
+                print(json.dumps({'status':'blocked','reason':str(exc),'node':'preflight',
+                                  'environment_verified':False},sort_keys=True))
+                return 2
             session=configured_session(case,config,args.output)
             async def execute_case():
                 results={};failed=False

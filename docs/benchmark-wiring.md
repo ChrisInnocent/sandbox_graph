@@ -199,3 +199,16 @@ collector 文档须有匹配 environment_ref、product、product_version、autho
 - build 共享方法、远端命令未知对账及更多已审计来源删除/物理释放适配的受控协议测试仍可继续开发，不能因服务未部署就标为实现完成。
 
 任务 16.3/16.4/18.1/18.2/18.3 的完成与时序算法已有专项证据，18.1 强杀三切点恢复由主代理 journal 测试覆盖；20.1 在 snapshot 来源清理及完整隔离矩阵验收前保持未勾。其余任务按整条验收条件核对，不能仅因一个 provider 可调用便勾选完整方法矩阵。
+
+## 创建终点声明必须与审计的同步性一致（issue #5）
+
+创建类用例（`B00.`/`B01.`/`B02.`）的 `completion.endpoint` 必须匹配实际创建入口的（已审计）同步性，否则 `runner case` 在预检直接 `blocked`（退出码 `2`，`reason` 含 `endpoint_declaration_mismatch`）：
+
+| 产品/拓扑 | 创建同步性 | 必须声明 |
+|---|---|---|
+| CubeSandbox、AgentENV（任意拓扑） | 同步（返回即 ready） | `API_COMPLETE` |
+| Kuasar `router` | 同步（park 到 running） | `API_COMPLETE` |
+| Kuasar `node_direct` | 异步（返回 `starting`） | `STATE_READY`（须轮询到 ready） |
+| 未审计（未知产品/缺拓扑） | 未验证 | 不强制（记原因，不猜） |
+
+原因：对同步创建声明 `STATE_READY` 会多做一次 `GET /sandboxes/{id}` inspect 往返（约 `0.1s`），把 create 时延虚高；对异步创建声明 `API_COMPLETE` 则把“受理”当“完成”。校验实现：`sandbox_bench/endpoint.py::endpoint_declaration_consistent` / `validate_endpoint_declaration`，复用 `operation_sync.completion_plan` 作为唯一审计来源。

@@ -166,3 +166,44 @@ def test_contract_requires_ready_fd_only_for_co_located_cli():
         case('B01.TEMPLATE', topology='co_located_cli', endpoint_kind='api_complete', readiness_signal='none')
     with pytest.raises(ValidationError):
         case('B01.TEMPLATE', endpoint_kind='guest_ready', readiness_signal='none')
+
+
+# issue #5：声明端点必须与审计的创建同步性一致
+from sandbox_bench.endpoint import endpoint_declaration_consistent, validate_endpoint_declaration
+
+
+def test_synchronous_create_must_declare_api_complete():
+    for product in ('cubesandbox', 'agentenv'):
+        assert endpoint_declaration_consistent(product, None, 'API_COMPLETE')[0] is True
+        ok, reason = endpoint_declaration_consistent(product, None, 'STATE_READY')
+        assert ok is False and 'synchronous' in reason and 'inspect' in reason
+    assert endpoint_declaration_consistent('kuasar', 'router', 'API_COMPLETE')[0] is True
+    assert endpoint_declaration_consistent('kuasar', 'router', 'STATE_READY')[0] is False
+
+
+def test_asynchronous_create_must_poll():
+    assert endpoint_declaration_consistent('kuasar', 'node_direct', 'STATE_READY')[0] is True
+    ok, reason = endpoint_declaration_consistent('kuasar', 'node_direct', 'API_COMPLETE')
+    assert ok is False and 'asynchronous' in reason
+
+
+def test_unverified_synchrony_is_not_enforced():
+    assert endpoint_declaration_consistent('kuasar', None, 'STATE_READY')[0] is True
+    assert endpoint_declaration_consistent('mystery', None, 'STATE_READY')[0] is True
+
+
+def test_validate_endpoint_declaration_blocks_only_creation_methods():
+    from sandbox_bench.contracts import CaseContract
+    from tests.benchmark.unit.test_contract_models import sample
+    from sandbox_bench.scenarios import ScenarioBlocked
+    data = sample(); data.update(product='cubesandbox')
+    data['completion'] = dict(data['completion'], endpoint='STATE_READY')
+    case = CaseContract.model_validate(data)
+    with pytest.raises(ScenarioBlocked, match='endpoint_declaration_mismatch'):
+        validate_endpoint_declaration(case)
+    ok = sample(); ok.update(product='cubesandbox')
+    ok['completion'] = dict(ok['completion'], endpoint='API_COMPLETE')
+    validate_endpoint_declaration(CaseContract.model_validate(ok))   # 不抛
+    non_creation = sample(); non_creation.update(method_id='B03.PAUSE', product='cubesandbox')
+    non_creation['completion'] = dict(non_creation['completion'], endpoint='STATE_READY')
+    validate_endpoint_declaration(CaseContract.model_validate(non_creation))  # 非创建类不检查

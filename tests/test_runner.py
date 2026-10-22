@@ -115,3 +115,41 @@ class RunnerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_case_preflight_blocks_synchronous_product_declared_state_ready():
+    """issue #5：cube/agentenv 同步创建声明 STATE_READY -> runner case 预检 blocked(退出码 2)。"""
+    import contextlib, io, yaml
+    from sandbox_bench.runner import main
+    from tests.benchmark.unit.test_contract_models import sample
+    data = sample(); data.update(product='cubesandbox')
+    data['completion'] = dict(data['completion'], endpoint='STATE_READY')
+    d = Path(tempfile.mkdtemp())
+    (d / 'case.yaml').write_text(yaml.safe_dump(data))
+    (d / 'env.yaml').write_text(yaml.safe_dump(
+        {'product': 'cubesandbox', 'api_url': 'http://localhost:1', 'data_url': 'http://localhost:1'}))
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        rc = main(['case', '--case', str(d / 'case.yaml'), '--config', str(d / 'env.yaml'),
+                   '--output', str(d / 'out')])
+    assert rc == 2
+    payload = json.loads(buffer.getvalue())
+    assert payload['status'] == 'blocked' and payload['node'] == 'preflight'
+
+
+def test_case_preflight_accepts_synchronous_product_declared_api_complete():
+    import contextlib, io, yaml
+    from sandbox_bench.runner import main
+    from tests.benchmark.unit.test_contract_models import sample
+    data = sample(); data.update(product='cubesandbox')
+    data['completion'] = dict(data['completion'], endpoint='API_COMPLETE')
+    d = Path(tempfile.mkdtemp())
+    (d / 'case.yaml').write_text(yaml.safe_dump(data))
+    (d / 'env.yaml').write_text(yaml.safe_dump(
+        {'product': 'cubesandbox', 'api_url': 'http://localhost:1', 'data_url': 'http://localhost:1'}))
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        main(['case', '--case', str(d / 'case.yaml'), '--config', str(d / 'env.yaml'),
+              '--output', str(d / 'out')])
+    # 通过端点预检（后续真实执行会因无网络失败，但不再被端点声明拦）
+    assert 'endpoint_declaration_mismatch' not in buffer.getvalue()

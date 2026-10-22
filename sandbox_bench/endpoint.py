@@ -9,6 +9,9 @@ from dataclasses import dataclass, asdict
 from typing import Callable
 
 from .scenarios import ScenarioBlocked
+from .operation_sync import completion_plan
+
+_CREATION_METHOD_PREFIXES = ('B00.', 'B01.', 'B02.')
 
 _TOPOLOGIES = ('router', 'node_direct', 'co_located_cli')
 _PRODUCTS = ('cubesandbox', 'kuasar', 'agentenv')
@@ -105,3 +108,37 @@ def endpoint_comparable(left: EndpointResolution, right: EndpointResolution) -> 
     return (left.endpoint_kind == right.endpoint_kind
             and left.endpoint_kind in _BLACKBOX_ENDPOINTS
             and right.endpoint_kind in _BLACKBOX_ENDPOINTS)
+
+
+def endpoint_declaration_consistent(product: str, topology, declared_endpoint: str):
+    """声明的完成端点是否与实际创建的（已审核）同步性一致（issue #5）。
+
+    - 同步创建（Cube/AgentENV、Kuasar router）必须声明 `API_COMPLETE`；否则
+      会多一次 inspect 往返、抬高 latency；
+    - 异步创建（Kuasar node_direct）不得声明 `API_COMPLETE`，否则把“受理”当“完成”；
+    - 同步性未经审计（未知产品/拓扑）→ 不强制（返回 True 与原因）。
+    返回 (ok, reason)，不抛异常，便于调用方选择 blocked/拒绝。
+    """
+    plan = completion_plan(product, 'create', topology=topology)
+    if not plan['verified']:
+        return (True, plan['reason'] or 'create endpoint unverified; declaration not enforced')
+    if plan['synchronous']:
+        if declared_endpoint != 'API_COMPLETE':
+            return (False, f'{product}/{topology or "-"} create is synchronous; declare API_COMPLETE, '
+                           f'not {declared_endpoint} (STATE_READY adds a redundant inspect round-trip '
+                           f'and inflates latency)')
+    elif declared_endpoint == 'API_COMPLETE':
+        return (False, f'{product}/{topology} create is asynchronous; API_COMPLETE would record '
+                       f'acceptance as completion')
+    return (True, '')
+
+
+def validate_endpoint_declaration(case) -> None:
+    """创建类用例的预检：端点声明与审计同步性不一致则 blocked（不静默规范化）。"""
+    method = str(getattr(case, 'method_id', ''))
+    if not method.startswith(_CREATION_METHOD_PREFIXES):
+        return
+    ok, reason = endpoint_declaration_consistent(case.product, getattr(case, 'topology', None),
+                                                 case.completion.endpoint)
+    if not ok:
+        raise ScenarioBlocked('endpoint_declaration_mismatch:' + reason)
