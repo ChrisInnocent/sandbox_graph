@@ -55,3 +55,19 @@ FIRST 必须注入 `first_command_reserver(environment_ref, sandbox_id, generati
 - 21.1：基线/cohort/暂停序列及资源 provider 接口完成，实际资源服务窗口由采集组验收。21.2：独立增长状态机、集合差集、旧实例损失、不完整列表、stall 重置及兼容偏差已测试，跨组 BTC-057 需主代理核对。21.3 共享公式集成已测，公式/awk 证据属统计组。21.4 固定请求与 SLO 算法已测，完整三产品矩阵不在本组证据范围。
 
 以上没有把真实候选产品性能、数据库 fencing 或物理清理标为已验收；本组不修改 tasks.md。
+
+## 创建成功率与成功创建数量（RT-36）
+
+创建场景（B01/B02）单机请求密度固定，必须统计：**发起 / 接纳 / 所选终点完成** 三类计数与速率，分列不得混同。
+
+| 字段 | 含义 | 来源 |
+|---|---|---|
+| `quality.n_attempts` | 本轮发起的请求总数（分母） | `metrics/quality.py` |
+| `quality.api_success_count` / `accepted_rate` | **接纳**成功数（API 已受理，非完成） | 行 `api_status='accepted'` |
+| `quality.completed_success_count` / `completed_success_rate` | **完成**成功数（到达所选终点） | 行 `status='success'` |
+| `quality.unknown_count` / `failure_statuses` / `failure_reasons` | 未知与失败分类 | 同上 |
+| `quality.final_cohort_count` | **实际存活实例数**（密度/cohort 场景；与累计创建数分开） | 需要 cohort 合同 |
+| `throughput.count` / `buckets[].rate_per_s` | 整轮成功创建数 + **1 秒窗口成功创建速率曲线** | `metrics/throughput.py` |
+| `throughput.late_operations` / `outside_operations` | 迟到完成 / 窗口外完成，不回填分位 | 同上 |
+
+边界：失败消耗请求预算、**不补发到成功数**；`api_status='rejected'`（`reason=api_rejected`）表示 API 接纳前被拒；`not_sent`（如资源观测不可用）不计入发起成功；缺失一律 `unavailable`，不填零。

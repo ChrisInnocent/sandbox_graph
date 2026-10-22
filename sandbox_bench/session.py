@@ -474,7 +474,11 @@ class BenchSession:
             if not isinstance(value,dict):value={}
             completion=value.get('completion',{})
             elapsed=value.get('elapsed_s',completion.get('latency'))
+            api_status=('rejected' if completion.get('reason')=='api_rejected'
+                        else 'not_sent' if result['status']=='unsent'
+                        else 'accepted' if completion else 'unknown')
             row={'operation_id':str(index),'status':result['status'],'elapsed_s':elapsed,
+                         'api_status':api_status,
                          'method':self.case.method_id,'repeat':self.case.repeat_id,'product':self.case.product,
                          'completion_kind':self.case.completion.endpoint,
                          'clock_domain':report.get('clock_domain'),'fixture_id':self.case.fixture_ref,
@@ -486,7 +490,10 @@ class BenchSession:
                 for child_index,child in enumerate(children):
                     child_completion=child.get('completion',{})
                     oid=f'{index}:{child_index}'
+                    child_api=('rejected' if child_completion.get('reason')=='api_rejected'
+                               else 'accepted' if child_completion else 'unknown')
                     rows.append({**row,'operation_id':oid,'parent_operation_id':str(index),
+                                 'api_status':child_api,
                                  'status':child['status'],'elapsed_s':child_completion.get('latency')})
                     at=child_completion.get('observed_at')
                     if child['status']=='success' and at is not None:

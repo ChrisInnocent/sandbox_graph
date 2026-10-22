@@ -9,11 +9,15 @@ def summarize_quality(rows, *, final_cohort=None):
     if len(set(ids))!=len(ids):
         raise ValueError('duplicate operation in quality records')
     cohort=None if final_cohort is None else sorted(set(final_cohort))
+    accepted=sum(r.get('api_status') in {'success','accepted'} for r in rows)
+    completed=sum(r['status']=='success' for r in rows)
     return {
         'formula_version':'quality.operations.v1',
         'n_attempts':len(rows),
-        'api_success_count':sum(r.get('api_status') in {'success','accepted'} for r in rows),
-        'completed_success_count':sum(r['status']=='success' for r in rows),
+        'api_success_count':accepted,
+        'completed_success_count':completed,
+        'accepted_rate':(accepted/len(rows)) if rows else None,
+        'completed_success_rate':(completed/len(rows)) if rows else None,
         'unknown_count':sum(bool(r.get('unknown')) or r['status']=='unknown' for r in rows),
         'failure_statuses':dict(Counter(r['status'] for r in rows if r['status']!='success')),
         'failure_reasons':dict(Counter(r.get('reason') or r['status'] for r in rows if r['status']!='success')),
