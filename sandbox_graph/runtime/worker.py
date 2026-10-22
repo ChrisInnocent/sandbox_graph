@@ -115,6 +115,30 @@ class Worker:
     def _job_kind(kind):
         return {'graph:all':'run','graph:check':'run','graph:analysis':'analysis','graph:report':'report'}.get(kind,kind)
 
+    def _notify_capacity_waiters(self,tx,job):
+        """一个 work 终结会释放全局工作槽位；唤醒卡在 `concurrency_budget` 上的其他组。
+
+        否则这些组已 park，且容量释放不会产生它们 aggregate 上的事件，会永久死锁。
+        """
+        run_id=job['run_id']
+        groups={}
+        for row in tx.scan('work_instances'):
+            body=row['body']
+            if (body.get('run_id')==run_id and body['status']=='pending'
+                    and body.get('queue_reason')=='concurrency_budget'):
+                groups[body['group_id']]=groups.get(body['group_id'],0)+1
+        for group,waiting in sorted(groups.items()):
+            identity=f'capacity:{job["job_id"]}:{group}'
+            if tx.get('event_ids',identity): continue
+            aggregate=f'group:{run_id}:{group}'
+            seq=max((r['body']['aggregate_seq'] for r in tx.scan('events')
+                     if r['body']['aggregate_id']==aggregate),default=0)+1
+            EventService.append_in(tx,EventEnvelope(event_id=identity,producer_scope='resource-scheduler',
+                producer_epoch=max(1,job.get('owner_epoch',1)),aggregate_id=aggregate,aggregate_seq=seq,
+                run_ref=run_id,plan_ref=job['payload'].get('plan_ref',''),
+                graph_ref=job['payload'].get('graph_ref',''),
+                kind='work_capacity_available',payload={'waiting_works':waiting}))
+
     def _publish_completion(self,tx,body):
         jobrow=tx.get('jobs',body['job_id'])
         if not jobrow: raise Conflict('completion references missing job')
@@ -142,6 +166,8 @@ class Worker:
                 tx.put('work_instances',job['scope_ref'],work['body']|{'status':status,'result_ref':f'job:{job["job_id"]}'})
         else:
             aggregate=f'run:{job["run_id"]}'
+        if kind=='work':
+            self._notify_capacity_waiters(tx,job)
         events=[r for r in tx.scan('events') if r['body']['aggregate_id']==aggregate]
         seq=max((r['body']['aggregate_seq'] for r in events),default=0)+1
         event=EventEnvelope(event_id=identity,producer_scope=job['scope_ref'],producer_epoch=job['owner_epoch'],aggregate_id=aggregate,aggregate_seq=seq,run_ref=job['run_id'],plan_ref=job['payload'].get('plan_ref',''),graph_ref=job['payload'].get('graph_ref',''),kind=f'{kind}_completed',payload={'job_id':job['job_id'],'status':job['status'],'result_ref':f'job:{job["job_id"]}'})
