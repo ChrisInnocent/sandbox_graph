@@ -50,7 +50,7 @@ T2 可使用 `bindings.RegisteredBenchmarks.validate_conditions`。部署注册 
 - **看不到的常见原因**：
   1. **F4 被阻塞**（如 `ANALYSIS_STALE`）⇒ 没有 `archives` 行 ⇒ 交付/证据摘要里没有 Excel。**能力本身没缺**，Excel blob 仍在 store 中。
   2. **只看 `artifact_refs`**：F1 现在已把 export 全部文件（含 `facts.xlsx`）列入 `artifact_refs`，并在 `output` 给出 `excel_ref` 与 `files`；在此之前 F1 只列 `report.md`。
-- **取回**：用 `FileArtifactStore(root).path_for(EvidenceRef.model_validate(analysis_exports[analysis_ref]['files']['facts.xlsx']))` 即可拿到落盘的 xlsx；即使 F4 阻塞也可用。注意：仓库未提供直接 dump 分析产物的 CLI，需通过账本 + artifact store 读取。
+- **取回**：已提供只读 CLI：`python -m sandbox_graph export-analysis --run-id RUN_ID --artifacts-root <root> --out <dir>`（或 `--analysis-ref`）；写出 `facts.xlsx`/`facts.json`/`report.md`/`comparison_manifest.json`，多版本按前 12 位分子目录。内部实现 `sandbox_graph/analysis_dump.py`（`store.verify` 校验摘要，篡改/缺失直接报错）。它只取回已校验产物，**不月经 F4 归档，不能作为交付完整性证明**。
 
 版本切换后的复用保留原始 case、plan、delivery 和 raw 身份。`ReuseService` 只发布指向已验收原交付的 projection；新交付不复制旧作用域的附件冒充新证据。A3 经授权校验 projection 后读取原始封存，按原 delivery 与 case hash 去重。`case_aliases` 将每个当前工作映射回原 case，进入 JSON、事实报告和 Excel 的 coverage 表；两个工作复用一份测量不会增加样本数或吞吐分子。F4 同时校验处置的 run/plan、冻结输入、引用文件和最终在途状态。
 

@@ -121,6 +121,16 @@ python3 -m venv .venv
 
 `selection.json` 的结构与合成示例见 [部署与恢复](docs/orchestration/setup.md)。支持按环境组、沙箱类型、优先级和测试用例等条件选择，依赖和能力仍需校验。预览不会提交远端实验。
 
+**若只差 Excel 文件**：分析阶段 A4 已经生成 `facts.xlsx`；归档（F4）被阻塞时文件仍存在。可直接导出（只读，需 `SANDBOX_GRAPH_POSTGRES_DSN` 与产物库根目录）：
+
+```bash
+.venv/bin/python -m sandbox_graph export-analysis --run-id RUN_ID \
+    --artifacts-root /path/to/artifacts --out ./analysis-export
+# 或指定某次分析版本：--analysis-ref ANALYSIS_REF
+```
+
+写出 `facts.xlsx` / `facts.json` / `report.md` / `comparison_manifest.json`（多版本时按前 12 位分子目录）。这只取回已校验的产物，不证明交付或覆盖完整。
+
 正式启动使用 `RunService.preview/start`、PostgreSQL、注册服务和 Worker，按部署文档完成装配。单机执行账本使用文件锁和持久提交意图；正式多 worker 编排使用 PostgreSQL，二者不混为已验证的同一后端。
 
 ### 5. 环境还原与指标/条件选择

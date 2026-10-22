@@ -14,6 +14,10 @@ def main():
     sub.add_parser('catalog',help='show definitions and unverified adapter status')
     sub.add_parser('migrate',help='provision PostgreSQL ledger and saver tables')
     status=sub.add_parser('status');status.add_argument('run_id')
+    dump=sub.add_parser('export-analysis',help='dump versioned analysis export files, including facts.xlsx')
+    dump.add_argument('--run-id');dump.add_argument('--analysis-ref')
+    dump.add_argument('--out',type=Path,required=True)
+    dump.add_argument('--artifacts-root',type=Path,default=os.environ.get('SANDBOX_GRAPH_ARTIFACTS'))
     preview=sub.add_parser('preview');preview.add_argument('input',type=Path)
     args=parser.parse_args()
     if args.command=='catalog':
@@ -34,6 +38,10 @@ def main():
             repository.migrate()
             with psycopg.connect(dsn,autocommit=True,row_factory=dict_row) as conn: PostgresSaver(conn).setup()
             result={'migration':'complete','backend':'PostgreSQL'}
+        elif args.command=='export-analysis':
+            from .analysis_dump import dump_with_root
+            if not args.artifacts_root: parser.error('--artifacts-root or SANDBOX_GRAPH_ARTIFACTS is required')
+            result={'written':dump_with_root(repository,args.artifacts_root,out=args.out,run_id=args.run_id,analysis_ref=args.analysis_ref)}
         else:
             from .interfaces.service import QueryService
             result=QueryService(repository).status(args.run_id)
