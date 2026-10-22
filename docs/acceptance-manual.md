@@ -216,3 +216,42 @@ background: { background_count: 50 }   # 先建 50 个背景沙箱
 ```
 - 预热池/他轮/基线实例**永不删除**；残留单列。
 - 归档：`evidence/real/<group>/<timestamp>/`，含命令、退出码、原始输出、版本与 blocked 原因。
+
+## G. 创建时延口径对照：官方 vs 本口径（组 41.7）
+
+**目的**：在同一环境确认本口径（`create.header_stop.reuse.warmup.v1`）与产品官方基准（Cube `examples/cube-bench`、AgentENV E2B SDK）**收敛**，排除"每请求握手/整包读取/轮询"造成的虚高。
+
+### G.0 先决条件
+- 一个**同步创建**的三产品环境（Cube/AgentENV；Kuasar 用 router 入口）；
+- 官方基准可用（Cube 官方 `cube-bench` 二进制或源码；AgentENV `scripts/e2b/run-e2b-benchmark.sh` 或其 infra）；
+- 本工程的 `case.yaml`/`environment.yaml`：`completion.endpoint=API_COMPLETE`、同来源、同规格、同请求与并发；`connection_reuse` 不得关闭。
+
+### G.1 本口径测量（同一规格/并发/请求）
+```bash
+# 端点预检（会拦同步端点误配 STATE_READY、异步端点轮询过粗）
+.venv/bin/python -m sandbox_bench.runner endpoint --case case.yaml --output run-endpoint
+# 正式测量（默认复用连接；预热应排除在统计外）
+.venv/bin/python -m sandbox_bench.runner case --case case.yaml --config environment.yaml --output run-caliber
+.venv/bin/python -m sandbox_bench.runner verify run-caliber/evidence
+```
+**期望证据**：
+- 每条操作行含 `caliber_version=create.header_stop.reuse.warmup.v1`；
+- `api_headers_s`（创建时延用此项）与 `api_complete_s` 存在；`body_read_s = api_complete_s - api_headers_s` **单列**；
+- 连接复用证据：`Session.connections_opened <= max_per_host`；预热轮次有记录且不入分位。
+
+### G.2 官方基准测量（同规格/并发/请求/来源）
+```bash
+# Cube
+./cube-bench --api-url <url> --mode create --concurrency <C> --requests <Q> [--headers ...]
+# AgentENV
+INFRA_REPO_URL=... AgentENV/scripts/e2b/run-e2b-benchmark.sh
+```
+官方在**响应头**停表（Cube `client.Do`），连接**复用且预热**（`RunWarmup`，预热排除）。
+
+### G.3 判定
+- 两者应在同量级收敛；差异应可由**已记录的**因素解释（冷热启动、规格生效差异、服务端尾延迟）。
+- 若本口径仍显著偏高：检查 `caliber_version` 是否确为 reuse、`body_read_s` 是否被误计入、是否残留 `STATE_READY` 轮询、连接是否真的复用（`connections_opened`）。
+- **不得**把两种口径的样本混成一个结论；跨口径一律按 `caliber_version` 分组或标 `incomparable`。
+
+### G.4 记录
+把两份原始结果（官方、本口径）、`api_headers_s`/`api_complete_s`/`body_read_s`、`connections_opened`、预热轮次与是否排除、规格/并发/请求、以及对差异的解释写入验收报告；缺环境时本项保持 **blocked**（不得用离线 mock 冒充）。

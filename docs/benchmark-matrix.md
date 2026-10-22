@@ -13,6 +13,7 @@
 | **请求总量 Q / 负载窗口** | `3`、`10`、`50`（WINDOW）；或 BATCH 的 `(B, C)`；或 OPEN_LOOP 的到达率 | 失败消耗预算、不补发到成功数 |
 | 重复轮次 | ≥3（报告分位、不跨轮平均） | 每轮独立 fixture |
 | 完成终点 | `API_COMPLETE`/`STATE_READY`/`SERVER_TERMINAL`/`EXEC_COMPLETE`（+白盒 `GUEST_READY`） | 必须与审计的入口同步性一致（见 benchmark-wiring.md） |
+| **口径版本（client caliber）** | `create.header_stop.reuse.warmup.v1`（复用+预热）/ `create.header_stop.oneoff.v1`（单次） | RT-47：停止于**响应头**（`body_read_s` 单列）；不同口径**不可比** |
 | 背景条件 | RT-45 目录（N/C/W/SP/D/L/TL/EP/DEP） | 逐场景 R/O/— 见 BCD-16 |
 | 指标 | RT-44 目录（T/H/R/S/C/A/B） | 逐场景 R/O/— 见 BCD-15 |
 
@@ -33,6 +34,6 @@
 
 ## 边界与诚实性
 
-- **不同规格 / 并发 / 请求 / 端点的样本不得混成一个时延或密度结论**（RT-19、RT-42）。
+- **不同规格 / 并发 / 请求 / 端点 / 口径版本的样本不得混成一个时延或密度结论**（RT-19、RT-42、RT-47）。
 - 失败消耗请求预算，不补发到成功数；`insufficient`/`unavailable` 保留原样，不填零。
 - **现状**：`scripts/matrix_run.py` 用离线 mock 跑矩阵（合成样本，真图/真调度/真证据），仅验证**编排与分格**；真实数值需真实环境。mock 的合成模型当前只在 **C/Q** 上有区分，**规格轴无差异**（真实产品才会有）。

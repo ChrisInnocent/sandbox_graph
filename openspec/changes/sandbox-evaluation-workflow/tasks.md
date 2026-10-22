@@ -325,12 +325,12 @@
 - [x] 41.3 预热：`measure.warmup(adapter, count, ...)` 建立并复用连接且**排除统计**；记录轮次/条数/是否可用。验收：BCT-14-WARMUP 通过（warmup=3、实测=10 → `n_attempts==10`）。
 - [x] 41.4 口径版本与可比性：`caliber_version`（`create.header_stop.reuse.warmup.v1` / `create.header_stop.oneoff.v1`）进入可比性键；跨版本→不可比；缺口径/缺复用/缺预热证据→`unverified`。验收：BCT-14-CALIBER 通过。
 - [x] 41.5 独立测试：`tests/benchmark/unit/test_create_caliber.py`（BCT-14，独立 marker；手动时钟/计数器，不用真实 sleep 猜时序）。验收：BCT-14 全组通过；字面量 oracle，不调用被测函数生成预期。
-- [ ] 41.6 文档：更新 [benchmark-wiring.md](../../../docs/benchmark-wiring.md)（客户端口径与预热，已完成）、[benchmark-matrix.md](../../../docs/benchmark-matrix.md)（口径版本为轴）、[acceptance-manual.md](../../../docs/acceptance-manual.md)（同环境与官方口径对照步骤）。
+- [x] 41.6 文档：更新 [benchmark-wiring.md](../../../docs/benchmark-wiring.md)（客户端口径与预热）、[benchmark-matrix.md](../../../docs/benchmark-matrix.md)（口径版本为轴）、[acceptance-manual.md](../../../docs/acceptance-manual.md)（同环境与官方口径对照步骤）。
 - [ ] 41.7 真实环境对照：在同一环境用**官方口径**与**本口径**各测一轮 B01 同步创建，确认收敛（同规格/并发/请求，排除预热），并记录 `api_headers_s`/`api_complete_s`/复用与预热证据。验收：需真实环境；缺环境时保持 blocked。
 
 ## 42. 生命周期模型、策略目录与状态合同
 
-- [ ] 42.1 新增 domain/agent_lifecycle.py 严格模型、事件状态表与版本化 RepairPolicy，区分生命周期 phase 与 execution/data/performance/cleanup；同步 docs/orchestration/contracts.md。验收：ALU-01、04、20 覆盖非法跳转、最后一次成功和等待不算闭合。
+- [ ] 42.1 新增 domain/agent_lifecycle.py 严格模型、事件状态表与版本化 RepairPolicy，区分生命周期 phase 与 execution/data/performance/cleanup；同步 docs/orchestration/contracts.md。验收：ALU-01、04、20 覆盖全部事件边/非法跳转、最后一次成功、超期/无进展/safety_budget 处置和等待不算闭合。
 - [ ] 42.2 新增 catalog/repair_actions.py，登记 N01/N07/N09 原有动作的 handler、schema、效果类别、权限、postcheck/reconcile/cleanup；建立 45 节点 policy 条目，未实现动作标 unavailable。验收：ALU-01/03、ORC-077/078，不能仅按 action 名执行未登记代码。
 - [ ] 42.3 新增 domain/evolution.py 的候选、门禁、审查与晋级合同；输入摘要与 provenance 分离，拒绝未知字段；同步合同文档。验收：ALU-14/16/18 的候选身份与摘要变更反例。
 - [ ] 42.4 在 tests/orchestration/conftest.py 建独立失败事件、假模型、效果账本和预算夹具，测试预期用字面值和手工依赖图；新增 schema 兼容测试。验收：旧记录可只读，新增字段不重解释历史；G1 收集清单非空且包含全部参数变体。
@@ -377,7 +377,7 @@
 
 ## 48. 晋级、版本运行与操作入口
 
-- [ ] 48.1 实现 PromotionService，将 gate/review/authorization/有效期/候选身份/worker ready 与 RevisionService 激活 CAS 纳入同一事务，封住 GraphService/CLI/worker 旁路。验收：ALU-19、ALI-07，并发两个候选只一个后继，授权撤销或摘要变更拒绝。
+- [ ] 48.1 实现 PromotionService，将 gate/review/发布授权/有效期/候选身份/worker ready 与 RevisionService 激活 CAS 纳入同一事务，显式传入冻结 target_plan/contract/auth 并核验运行权限，封住 GraphService/CLI/worker 旁路。验收：ALU-19、ALI-07，并发两个候选只一个后继，授权撤销或摘要变更拒绝；R3 新合同用于后继，旧 run 保持旧引用，缺授权不回退继承。
 - [ ] 48.2 实现不可变 code bundle、worker 能力注册和版本匹配领取；无 ready worker 保留 verified_waiting_worker，不提前关闭旧 gate。验收：ALU-19、ALI-08；文档型 R0 不创建空 run，可执行变化必须新 graph_ref。
 - [ ] 48.3 实现旧 run drain、新 run/thread、共享资源域解除后的新测量与回退协议；新版本失败停止新派发并保留旧版本对账能力。验收：ALI-08、ORC-087，旧 operation 不被新代码重发或旧 checkpoint 覆盖。
 - [ ] 48.4 提供 lifecycle status/request-repair/request-change/decision/cancel 与 gates 查询命令，写入统一授权审计，README 给出真实可执行示例。验收：命令合同测试覆盖重复 request、陈旧 revision、缺权限、具体 blocked 原因及恢复入口。
