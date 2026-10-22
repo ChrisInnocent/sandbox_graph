@@ -266,11 +266,11 @@ Cube：`POST /templates` → job `building/ready/error` → sandbox create。Age
 
 * 前置：运行态、明确负载／dirty 工作集、文件 hash、仅存于原进程内存的 token；记录实例及进程身份。预检与测量实例隔离或复位。
 
-* 计时：请求→暂停完成状态观察；API 返回单列。执行停止与资源释放分别观测，不能把“不响应”当已暂停，把网络故障当执行停止。无进程推进的证据应来自非唤醒观测；无法获得则标 unknown。
+* 计时：**三产品暂停均为同步**——暂停接口返回即已 `paused`（审计 [alignment §11](../../../docs/source-audit/alignment.md)），故同步暂停时延 = 暂停调用返回耗时（`API_COMPLETE` 即 `STATE_READY(paused)`），**不需轮询**；为证据可加一次只读 `GET /sandboxes/{id}` 确认 `paused`（不计入时延窗口，链路中的 `WAIT_PAUSED` 对三产品退化为一次确认读取）。暂停时延含检查点／快照写盘。执行停止与资源释放分别观测，不能把“不响应”当已暂停，把网络故障当执行停止。无进程推进的证据应来自非唤醒观测；无法获得则标 unknown。
 
 * 后态：暂停状态 CPU、保留内存、磁盘占用及释放量／释放观察时延；同源恢复验证属于本用例后验，不是 B04 性能矩阵。
 
-* 映射：Cube pause 后需查 paused；AgentENV await pause 后仍核验；Kuasar `memory=true` 捕获并暂停，`memory=false` 磁盘语义分组。源是否卸载、写入哪些状态按实证报告。
+* 映射：**Kuasar** node API `POST /sandboxes/{id}/pause` 成功 **204 即 paused**（`capture`→`CommitRunningPaused`）；**router 暂停是转发到 node**，同步性一致（与 create 的 park 不同）；`ErrSandboxStarting`(409) 不是成功。**Cube** `pause_sandbox` 等 CubeMaster→Cubelet RPC 返回；**AgentENV** `pause_sandbox` await 完成才 204。`memory=true`（Kuasar 内存检查点）/`memory=false`（磁盘语义）分组。源是否卸载、写入哪些状态按实证报告。
 
 * 重入：已 paused 不再提交 pause 并产出虚假的近零时延；可继续资源观测／恢复检查。原始计时缺失则该样本不完整。
 

@@ -377,3 +377,36 @@ fd 由 node 自身产生并沿进程链传递：
 - **失败即残留**：单次删除失败记 `failures` 并计入 residue，不算成功。
 
 **登记落点**：需求 `RT-43`；执行设计 `benchmark-design.md` BCD-14；测试合同 `benchmark-contract-design.md` BCT-11；任务 `tasks.md` 组 34；代码 `sandbox_bench/restore.py`、`Adapter.list_owned`。
+
+## 11. 暂停时延的测量与三产品暂停同步性审计
+
+2026-10-21 补查，纯源码审计。
+
+**问题**：B03.PAUSE 的暂停时延怎么测？三产品的暂停是**同步**（调用返回即已暂停）还是**异步**（返回后仍需轮询）？Kuasar 的 node API 与 router API 是否不同？
+
+**结论先行**：三产品暂停**均为同步**——暂停接口返回时沙箱已处于 `paused`，无需轮询；因此 B03 的同步暂停时延 = 暂停调用返回耗时（`API_COMPLETE` 即 `STATE_READY(paused)`）。Kuasar 的 router 暂停是**转发**到 node API（不同于 create 的 park），二者同步性一致。
+
+### 11.1 Kuasar：node API 与 router API 均为同步
+
+- node API：`internal/api/api.go` L471 `POST /sandboxes/{id}/pause` → L756 `a.pause` → L797 `a.core.Pause(...)`；成功后 **204**，`ErrAlreadyPaused`／`ErrSandboxStarting` → **409**。
+- `core.Pause`（`internal/orch/orch.go` L1209）在 `StateRunning` 时调 `pauseSandboxLocked`（L1389）：`o.capture(...)`（L1401，执行检查点/快照）→ `o.st.CommitRunningPaused(...)`（L1413，Running→Paused）→ 清理并 `publishUpsert`。**返回即已 paused**。
+- router：`internal/router/router.go` L1142 `handleSandboxVerb` 对非 DELETE 动词 `resolveRoute` 后 `forwardToNode`（L1195）——**直接转发并回传 node 状态**，不像 create 那样在 registry park（§9）。→ router 暂停同步性与 node 一致。
+
+### 11.2 CubeSandbox：API→Master→Cubelet 全程阻塞
+
+- `CubeAPI/src/services/sandboxes.rs` L336 `pause_sandbox` → `cubemaster.update_sandbox(pause)` 并等返回（`ensure_update_result`）。
+- `CubeMaster/pkg/service/sandbox/sandbox_resume_pause.go` L51 `pauseSandbox` → L96 `cubelet.UpdateWithTimeout(ctx, ..., pauseCubeletRPCTimeout)` **阻塞**等 Cubelet；成功后 `pausesnap.Complete`。超时/失败 → RetCode 错误。→ **同步**。
+
+### 11.3 AgentENV：await 到已暂停
+
+- `src/api/impls/sandbox.rs` L1735 `sandboxes_sandbox_id_pause_post` → L1751 `orchestrator.pause_sandbox(...)`，成功回 **204**。
+- `src/orchestrator/service.rs` L1441 `pause_sandbox_impl`：`sandbox.pause(artifact_root).await` **await 完成**，再置 `metadata.state = Paused` 并持久化。并发暂停经 `join_concurrent_pause`（L2202）等待进行中的暂停。→ **同步**。
+
+### 11.4 对 B03.PAUSE 测量的落点
+
+- **完成判据**：`API_COMPLETE`（暂停接口返回）即 `STATE_READY(paused)`；三产品均同步，**不需轮询**；为证据可加一次只读 `GET /sandboxes/{id}` 确认 `paused`（不计入时延窗口）。
+- **需测指标**：T-01/T-02 暂停时延（同步）、R-05 状态正确性（实际 paused、非仅“不响应”）。
+- **口径**：暂停时延含检查点/快照写盘（Kuasar `capture`、Cube pause-snapshot、AgentENV `pause`）；不得把网络不响应当已暂停，不把 `ErrSandboxStarting`（Kuasar 409）当成功。
+- **与 create 一致的原则**：只测**同步**完成；异步入口（Kuasar 数据面 node create）必须轮询到 ready 再计为创建时延，或改用同步入口（Kuasar router）。
+
+**登记落点**：需求 `RT-23`／`RT-24`（暂停恢复合同与来源分层）；节点 `test-nodes.md` §5 B03；逐场景 `scenario-spec.md` §4 B03；审计见 `alignment.md` §9（create）与本节（pause）。

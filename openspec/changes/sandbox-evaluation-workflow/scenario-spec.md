@@ -73,9 +73,10 @@
 ## 4. B03 暂停
 - **定义**：`B03.PAUSE`；profile 显式区分保留内存检查点／磁盘保留冷恢复／仅冻结。
 - **链**：`PREPARE_RUNNING_STATE → RECORD_PROGRESS_MARKERS → PAUSE_SUBMIT → WAIT_PAUSED → OBSERVE_STOP_AND_RESOURCES → VERIFY_RESUMABILITY`。
+- **同步性**：**三产品均为同步**（审计 [alignment §11](../../../docs/source-audit/alignment.md)）：暂停接口返回即 `paused`，`API_COMPLETE` 即 `STATE_READY(paused)`，**不需轮询**；Kuasar router 暂停是**转发**到 node（与 create 的 park 不同）。
 - **指标**：R `T-01、T-02、R-05`；O `H-03、S-01–S-05、A-03`；— `T-05、B-*、C-*`。
 - **条件**：R `N-01、N-04、SP-01、D-02`；O `C-01、TL-01/03`；— `C-02/03、W-*、L-*`。
-- **正确性断言**：执行停止与资源释放分别观测；不把「不响应」当已暂停，不把网络故障当执行停止；无进程推进证据须来自非唤醒观测。
+- **正确性断言**：实际 `paused`（非仅“不响应”）；`ErrSandboxStarting`(409) 不当成功；执行停止与资源释放分别观测。
 
 ---
 
