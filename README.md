@@ -11,6 +11,7 @@
 | 第一次使用、让智能体执行测试 | 本文的“首次使用”和“交给智能体的提示词” |
 | 配置真实环境、来源、规格和采集器 | [执行配置说明](docs/benchmark-wiring.md)、[环境适配实现进度](docs/environment-adapters.md) |
 | 运行多环境组、配置数据库和恢复任务 | [编排部署与恢复](docs/orchestration/setup.md) |
+| 确认测试交付件（数据/日志/报告/Excel）落在哪 | [交付件落盘位置](docs/orchestration/setup.md#交付件数据日志报告落在哪里) |
 | 增删改测试、节点、环境或计算方法 | [维护指南](docs/maintenance.md) |
 | 查看设计中的节点、子流程及自动化边界 | [节点工作流](openspec/changes/sandbox-evaluation-workflow/node-workflows.md)、[节点自动化职责](openspec/changes/sandbox-evaluation-workflow/node-automation.md) |
 | 判断当前哪些已实现、哪些尚未验收 | [交付记录与缺口](docs/verification/README.md)、[任务清单](openspec/changes/sandbox-evaluation-workflow/tasks.md) |

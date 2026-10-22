@@ -86,3 +86,36 @@ await worker.serve(stop_event)
 只分析/只报告通过 `RunService.start` 显式 evidence.source_run_id 绑定原运行，并分别提供 analysis_input_ref/analysis_ref；授权必须覆盖冻结组，计划和图版本必须匹配。该入口只派发纯分析或报告，不创建测量任务。`reanalyze/rerender` 同样精确绑定输入，使用独立 command thread。
 
 复用 producer 绑定、accepted 自动投影及 R6/A5 显式有界分析返工接入见 [reuse-rework.md](reuse-rework.md)。旧交付没有 measurement_bindings 或未启用显式 reuse policy 时不可默认复用。当前外部 supplement/remeasure 动作缺注册执行器即终态 blocked，不产生待消费空任务。
+
+## 交付件（数据／日志／报告）落在哪里
+
+单次测试的中间与最终交付件分**两处**，且都**不会自动出现在源码树里**。
+
+### 1. 会话／输出目录（普通目录）
+
+- 单用例 CLI：`sandbox_bench.runner case --case case.yaml --config environment.yaml --output <run-directory>`（目录须不存在）。其中：
+  - 原始载荷与账本：`run.json`、`ledger/`、`case.json`、`load.json`、`density.json`、`validation.json`、`target_bindings.json`、`steady.json`、`execution_journal.json`、`resource_samples/`、`host_samples/`、`provider_evidence/`、`fixture_restore/`、`source_lifecycle/`、`cleanup.jsonl`。
+  - 最终封存证据：`<run-directory>/evidence/`（`case_manifest.json` + 各 `*.json`、`summary.json/csv`、可选 `summary.xlsx`、`raw/…`），可摘要复算。
+- 图内 worker：会话目录由**部署层**通过 `configured_session(case, config, folder)` 注入（通常为工作/临时目录），仓库里没有默认位置。
+
+### 2. 不可变产物库（artifact store）
+
+- `FileArtifactStore(root)`：内容寻址，布局 `<root>/<scope>/<sha256>`（blob）+ `<root>/<scope>/<sha256>.json`（`EvidenceRef` 清单）；`artifact_id=<scope>:<sha256>`。
+- 谁写入：
+  - `delivery_finalizer`（`sandbox_bench/bridge.py`）在发布交付前把 N10 封存证据**全部文件**入库，`scope=group_id`，并生成 `archive_index` / `case_index_ref`。
+  - 分析产物（`facts.json`、`report.md`、`facts.xlsx`、`comparison_manifest.json`）由 `AnalysisReportServices` 以 `scope=run_ref` 入库。
+  - 原始编排日志只以引用形式出现（`store_raw_log` 校验 `artifact://` 引用），不内联进控制状态。
+- **`root` 由部署层提供，仓库无默认值/env**；根 `.gitignore` 忽略 `/artifacts/`。
+
+### 3. 节点上有什么
+
+- 三产品**环境组节点**上只有运行时事实、运行时原始日志及远端 journal/受限备份（环境配置的 `remote_agent`/`journal`）；**它们不是交付件仓库**。
+- 测量证据由 orchestrator 侧的会话/采集器组装并封存，再经 `delivery_finalizer` 入库。
+
+### 4. 会不会同步回工程目录
+
+- **不会自动同步进源码目录**。要让产物出现在工程目录，只能把 `--output` 或产物库 `root` 指到工程目录（并被 git 忽略）。
+- 取回方式：
+  - 分析产物（含 Excel）：`python -m sandbox_graph export-analysis --run-id <run> --artifacts-root <root> --out <dir>`。
+  - 用例证据：按交付输出里的 `case_index_ref` 在 store 中定位 `<scope>/<sha256>`（scope 为环境组）。
+  - F4 被阻塞时，F1/`analysis_exports` 仍可定位产物；这只证明产物流水存在，**不证明交付或覆盖完整**。
