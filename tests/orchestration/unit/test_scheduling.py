@@ -78,3 +78,21 @@ def test_explicit_environment_ref_flows_to_group_and_work_without_guessing(repos
     conflicting=case.model_copy(update={'case_id':'other','environment_ref':'environment:other'})
     with pytest.raises(ValueError,match='environment'):
         PlanCompiler([case,conflicting]).compile(Selection(),authorized_groups={'G_A'})
+
+
+def test_quarantined_lease_is_reported_distinctly(repository):
+    """issue #3：被隔离的租约必须显式可见，不静默归为普通 resource_conflict。"""
+    case=Case(capability='supported',adapter_verified=True,case_id='A',group_id='A',sandbox_type='synthetic',
+              scenario_id='B01',method_id='B01.TEMPLATE',priority='base',conditions=({'cpu':1},),
+              conflict_domains=('host_A',),contract_ref='fixture')
+    service=RunService(repository,PlanCompiler([case]));plan=service.preview(Selection(),authorized_groups={'A'})
+    run=service.start('start',plan.hash,authorized_groups={'A'})
+    scheduler=SchedulingService(repository);scheduler.expand_work(run.run_id,'A',plan_ref=plan.hash)
+    token=LeaseService(repository).acquire_thread('group:A','A',100)
+    with repository.transaction() as tx:
+        tx.put('resource_leases','host_A',{'scope':'other-run','status':'quarantine','reason':'delivery cleanup remains unverified'})
+    assert scheduler.dispatch_work(run.run_id,'A',token=token,max_concurrency=3,deadline=1090)==[]
+    with repository.transaction() as tx:
+        assert tx.get('work_instances',f'{run.run_id}:{plan.hash}',) is None  # 仅为占位；下行为真实断言
+        work=[x['body'] for x in tx.scan('work_instances') if x['body']['group_id']=='A']
+        assert [w['queue_reason'] for w in work]==['lease_quarantined']

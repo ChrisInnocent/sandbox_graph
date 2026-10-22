@@ -55,11 +55,20 @@
 5. 无法证明外部已停止时保留 quarantine；已知资源按 scope 单独取消、清理并记录剩余。
 6. 新图只用新 run/thread，旧图保留 drain/cleanup 入口。已发布文件无账本引用属于 orphan，尚无自动 GC 服务。
 
-### quarantine / 残留 lease 目前没有自动回收
+### quarantine / 残留 lease（issue #3 部分修复）
 
-`SchedulingService.dispatch_work` 对**任何存在的** `resource_leases` 行（`quarantine` 或崩溃残留 `reserved`）一律置 `queue_reason='resource_conflict'` 并永久跳过该 work；除 `LeaseService.release(..., closed=True)`（要求清理已核验）与 `release`/已验证清理路径会 `delete` 外，**没有回收/reconcile 入口**，因此一次未核验清理（例如缺资源证据导致 `resources` 未关闭）会持续阻塞后续所有 run。
+`SchedulingService.dispatch_work` 对**任何存在的** `resource_leases` 行都会跳过该 work；现已区分：
 
-当前唯一处置是管理员核对证据后手工删除对应行：`DELETE FROM orchestration_records WHERE kind = 'resource_leases' AND key = '<conflict_domain>'`（先确认对应 scope 的外部效果已确实停止）。自动回收/reconcile 命令尚未实现；不要把它当作已具备的能力。
+- `queue_reason='lease_quarantined'`（被隔离待核销）→ 运维可见，需对账后释放；
+- `queue_reason='resource_conflict'`（被其它 run 占用）→ 正常竞争。
+
+根因已收窄：`_N09` 现在按**删除同步性**判定物理释放（`sandbox_bench/operation_sync.py::physical_release_status`）：
+
+- **同步删除**（Cube `sync:true`、AgentENV）→ `physical_release='verified'` → 交付 gap 不再添加 → `cleanup_status=complete` → 租约**正常删除，无残留**；
+- **异步删除**（Kuasar）→ 必须有界核验到 `gone` 才 `verified`，否则保持 `unverified`（不得把“已接受删除”当“已删除”）；
+- `delivery_finalizer` 只在“有未核实释放行”或“有 journal 归属却无已核实释放行”时才记 `physical_resource_release_unverified`。
+
+仍**没有自动回收**：隔离租约只能由管理员核对证据后手工删除（`DELETE FROM orchestration_records WHERE kind='resource_leases' AND key='<conflict_domain>'`），或按上述根因使清理变为已核实。自动 reclaim/reconcile 入口仍属未实现缺口。
 
 缺原版本定义、原始文件、真实适配或授权合同应明确阻塞；不能换用当前图解释旧 checkpoint，也不能补空证据或测量值。
 

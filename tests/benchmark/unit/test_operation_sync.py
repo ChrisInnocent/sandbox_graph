@@ -97,3 +97,24 @@ def test_measure_exposes_the_n05_completion_plan():
     assert operation_completion(A(), 'create', topology='router')['synchronous'] is True
     assert operation_completion(A(), 'create', topology='node_direct')['synchronous'] is False
     assert operation_completion(A(), 'snapshot')['verified'] is False
+
+
+# issue #3 根因：删除同步性决定物理释放能否为 verified
+from sandbox_bench.operation_sync import physical_release_status
+
+
+def test_synchronous_delete_release_is_verified():
+    assert physical_release_status('cubesandbox', 'api_deleted') == 'verified'
+    assert physical_release_status('agentenv', 'api_deleted') == 'verified'
+
+
+def test_async_delete_requires_observed_gone():
+    assert physical_release_status('kuasar', 'api_deleted') == 'unverified'          # 仅受理
+    assert physical_release_status('kuasar', 'api_deleted', observed_state='running') == 'unverified'
+    assert physical_release_status('kuasar', 'api_deleted', observed_state='gone') == 'verified'
+
+
+def test_non_deleted_or_unknown_endpoint_stays_unverified():
+    assert physical_release_status('kuasar', 'api_absent') == 'unverified'
+    assert physical_release_status('kuasar', 'unknown') == 'unverified'
+    assert physical_release_status('mystery', 'api_deleted') == 'unverified'

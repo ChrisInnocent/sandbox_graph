@@ -98,7 +98,11 @@ class SchedulingService:
                     tx.put('work_instances',row['key'],work|{'status':'blocked','queue_reason':'missing_conflict_domains'});continue
                 reservations=[tx.get('resource_leases',d) for d in domains]
                 if any(reservations):
-                    tx.put('work_instances',row['key'],work|{'queue_reason':'resource_conflict'});continue
+                    # issue #3：区分“被隔离待核销”与“被其他 run 占用”，不再静默归为同一冲突。
+                    quarantined=sorted(d for d,r in zip(domains,reservations)
+                                       if r and r['body'].get('status')=='quarantine')
+                    tx.put('work_instances',row['key'],work|{'queue_reason':'lease_quarantined' if quarantined else 'resource_conflict'})
+                    continue
                 # Reservation belongs to work, not group driver: takeover never frees it.
                 for domain in domains: tx.put('resource_leases',domain,{'scope':work['work_id'],'thread_id':token.thread_id,'owner_epoch':token.owner_epoch,'status':'reserved'})
                 identity=str(uuid4())

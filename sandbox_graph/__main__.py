@@ -22,6 +22,10 @@ def main():
     cases.add_argument('--run-id',required=True)
     cases.add_argument('--out',type=Path,required=True)
     cases.add_argument('--artifacts-root',type=Path,default=os.environ.get('SANDBOX_GRAPH_ARTIFACTS'))
+    reclaim=sub.add_parser('reclaim-leases',help='list or reclaim quarantined resource leases (issue #3)')
+    reclaim.add_argument('--scope',default=None);reclaim.add_argument('--domain',action='append',default=[])
+    reclaim.add_argument('--evidence-ref',default='');reclaim.add_argument('--reason',default='operator reconciliation')
+    reclaim.add_argument('--apply',action='store_true')
     preview=sub.add_parser('preview');preview.add_argument('input',type=Path)
     args=parser.parse_args()
     if args.command=='catalog':
@@ -46,6 +50,24 @@ def main():
             from .analysis_dump import dump_cases_with_root
             if not args.artifacts_root: parser.error('--artifacts-root or SANDBOX_GRAPH_ARTIFACTS is required')
             result={'written':dump_cases_with_root(repository,args.artifacts_root,out=args.out,run_id=args.run_id)}
+        elif args.command=='reclaim-leases':
+            from .runtime.leases import LeaseService
+            service=LeaseService(repository);candidates=service.reclaim_candidates()
+            if not args.apply:
+                result={'candidates':candidates,'applied':False}
+            else:
+                groups={}
+                for item in candidates:
+                    if (not args.domain or item['domain'] in args.domain) and item['reclaimable'] \
+                            and (not args.scope or item['scope']==args.scope):
+                        groups.setdefault(item['scope'],[]).append(item['domain'])
+                reclaimed=[]
+                for scope,domains in groups.items():
+                    token=service.acquire_thread(f'lease-reclaim:{scope}','operator',60)
+                    reclaimed+=service.reclaim(domains,scope=scope,token=token,
+                        evidence_ref=args.evidence_ref,reason=args.reason)
+                result={'reclaimed':reclaimed,'applied':True,
+                        'skipped':[c for c in candidates if c['domain'] not in set(reclaimed)]}
         else:
             from .interfaces.service import QueryService
             result=QueryService(repository).status(args.run_id)

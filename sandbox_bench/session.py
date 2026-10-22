@@ -623,6 +623,22 @@ class BenchSession:
             self.journal.receipt(key,binding,row);rows.append(row)
         return rows
 
+    async def _observe_gone(self, sid, deadline):
+        """有界核验异步删除是否真的 gone；无法核验返回 None（保持 unverified）。"""
+        inspect=getattr(self.adapter,'inspect',None)
+        if inspect is None:return None
+        for _ in range(3):
+            remaining=deadline-time.monotonic()
+            if remaining<=0:break
+            try:
+                data=await asyncio.to_thread(inspect,{'sandbox_id':sid},remaining)
+            except Exception:
+                return None
+            state=data.get('state') if isinstance(data,dict) else None
+            if state in ('gone','dead','not_found','deleted'):return state
+            await asyncio.sleep(0.05)
+        return None
+
     async def _N09(self, resource_ids=None):
         rows=[]
         deadline=time.monotonic()+self.case.cleanup_timeout_s
@@ -646,7 +662,14 @@ class BenchSession:
                 status='api_deleted'
             except Exception as exc:
                 status='api_absent' if getattr(exc,'status',None)==404 else 'unknown'
-            rows.append({'resource_id':sid,'status':status,'physical_release':'unverified'})
+            from .operation_sync import completion_plan,physical_release_status
+            product=getattr(self.adapter,'product',None)
+            observed=None
+            if status=='api_deleted' and completion_plan(product,'delete')['verified'] \
+                    and not completion_plan(product,'delete')['synchronous']:
+                observed=await self._observe_gone(sid,deadline)
+            rows.append({'resource_id':sid,'status':status,
+                         'physical_release':physical_release_status(product,status,observed_state=observed)})
         if self.source_lifecycle:
             await self.source_lifecycle.reconcile_consumers(deadline-time.monotonic())
         # WF-37/D19: an ownership sweep catches orphans not recorded in the journal and verifies

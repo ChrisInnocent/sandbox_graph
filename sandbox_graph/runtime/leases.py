@@ -30,6 +30,44 @@ class LeaseService:
                 old=tx.get('resource_leases',domain)
                 if not old or old['body']['scope']!=scope: raise Conflict('cannot quarantine another scope')
                 tx.put('resource_leases',domain,old['body']|{'status':'quarantine','reason':reason})
+    def reclaim_candidates(self):
+        """只读：列出隔离租约及其 scope 是否已全部关闭资源（供运维/任务判断）。"""
+        with self.repository.transaction() as tx:
+            out=[]
+            for row in tx.scan('resource_leases'):
+                body=row['body']
+                if body.get('status')!='quarantine': continue
+                scope=body.get('scope')
+                unclosed=[r['key'] for r in tx.scan('resources')
+                          if r['body'].get('scope')==scope and r['body'].get('status')!='closed']
+                out.append({'domain':row['key'],'scope':scope,'reason':body.get('reason'),
+                            'unclosed_resources':sorted(unclosed),'reclaimable':not unclosed})
+            return out
+    def reclaim(self, domains, *, scope, token, evidence_ref, reason):
+        """有界、凭证据回收**隔离**租约（issue #3）。
+
+        仅当：（a）目标域确实处于 quarantine，（b）scope 匹配，（c）提供了非空
+        `evidence_ref`，且（d）该 scope 无未关闭 `resources` 时才删租约并广播释放。
+        否则拒绝（绝不静默释放，也不回收其它 scope/被占用的租约）。
+        """
+        if not evidence_ref: raise ValueError('reclaim requires an evidence reference of closure')
+        domains=sorted(set(domains))
+        if not domains: raise ValueError('canonical conflict domains required')
+        with self.repository.transaction() as tx:
+            tx.assert_fence(token)
+            for domain in domains:
+                old=tx.get('resource_leases',domain)
+                if not old: raise KeyError(domain)
+                if old['body']['scope']!=scope: raise Conflict('cannot reclaim another scope')
+                if old['body'].get('status')!='quarantine': raise Conflict('only quarantined leases can be reclaimed')
+                unclosed=[r['key'] for r in tx.scan('resources')
+                          if r['body'].get('scope')==scope and r['body'].get('status')!='closed']
+                if unclosed: raise Conflict('unclosed resources prevent reclaim')
+                tx.put('lease_reclaims',domain,{'domain':domain,'scope':scope,'evidence_ref':evidence_ref,
+                    'reason':reason,'reclaimed_by':token.thread_id},immutable=True)
+            for domain in domains: tx.delete('resource_leases',domain)
+            self.announce_release(tx,domains,scope,token.owner_epoch)
+        return domains
     @staticmethod
     def announce_release(tx,domains,scope,owner_epoch):
         tx.put("outbox",f"resource-release:{uuid4()}",{"kind":"resource_domains_available","domains":sorted(domains),"scope":scope,"owner_epoch":owner_epoch},immutable=True)

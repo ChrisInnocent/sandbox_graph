@@ -204,7 +204,12 @@ def delivery_finalizer(sessions,artifact_store,*,repository=None,script_ref=None
         if data!='valid':gaps.append('measurement_data_'+data)
         if unknown:gaps.append('external_operations_unresolved')
         cleanup=session.journal.state().get('cleanup',[])
-        if cleanup or session.journal.owned(session.environment):gaps.append('physical_resource_release_unverified')
+        # issue #3：只有“未验证物理释放”或“有 journal 归属却无已核实释放行”才算 gap。
+        # 同步删除（Cube/AgentENV）会得到 physical_release='verified'，不应再阻挡租约回收。
+        released={row['resource_id'] for row in cleanup if row.get('physical_release')=='verified'}
+        unresolved=[row for row in cleanup if row.get('physical_release')!='verified']
+        owned_ids={row['resource_id'] for row in session.journal.owned(session.environment)}
+        if unresolved or (owned_ids-released):gaps.append('physical_resource_release_unverified')
         result=NodeResult(execution_status=execution,data_status=data,coverage_status='attempted',
             cleanup_status='unknown' if gaps else 'not_needed',
             performance_status='not_evaluated',artifact_refs=tuple(refs),

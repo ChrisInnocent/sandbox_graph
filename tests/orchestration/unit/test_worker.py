@@ -213,3 +213,20 @@ def test_resource_release_before_wait_registration_is_not_lost(repository):
     leases.release(['shared'],scope='G_A',token=token,closed=True)
     Worker(repository,{},policy=WorkerPolicy(claim_seconds=30,job_seconds=20,poll_seconds=1)).pump_outbox()
     assert WaitService(repository).park(WaitRecord(wait_id='late-wait',activation_id='parent',thread_id='group:B',scope='G_B',plan_ref=plan.hash,graph_ref='g',version=1,aggregate_id='group:r:G_B',cursor=0,deadline=1100))=='ready'
+
+
+def test_verified_cleanup_releases_reservation_leaving_no_residue(repository):
+    """issue #3 期望：清理已核实（cleanup_status=complete, 无未关闭资源）不产生任何租约残留。"""
+    from sandbox_graph.domain.models import DeliveryManifest,NodeResult
+    run_record(repository);enqueue(repository)
+    with repository.transaction() as tx:
+        tx.put('resource_leases','host',{'scope':'G_A','status':'reserved'})
+        job=tx.get('jobs','j')['body']
+    async def finalizer(job,result):
+        return DeliveryManifest(delivery_id='d',version=1,scope='G_A',plan_ref='p',contract_ref='c',
+            work_refs=('G_A',),evidence=(),result=NodeResult(execution_status='succeeded',cleanup_status='complete'))
+    handler=GraphJobHandler(repository,None,None,None,lease_seconds=30,segment_seconds=20,delivery_finalizer=finalizer)
+    asyncio.run(handler.finalize(job,{'results':{}}))
+    with repository.transaction() as tx:
+        assert tx.get('resource_leases','host') is None
+        assert tx.scan('resource_leases')==[]

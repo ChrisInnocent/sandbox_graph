@@ -58,6 +58,24 @@ def completion_plan(product, operation, *, topology=None):
     return _plan(*entry)
 
 
+def physical_release_status(product, delete_status, *, observed_state=None):
+    """删除后能否声称物理释放（issue #3 根因）。
+
+    - 非 `api_deleted` → `unverified`；
+    - 同步删除（Cube/AgentENV）→ `verified`（调用返回即已删除）；
+    - 异步删除（Kuasar）→ 必须**观察**到 gone 才 `verified`，否则 `unverified`；
+    - 端点未确认 → `unverified`。绝不把“已接受删除”当“已删除”。
+    """
+    if delete_status != 'api_deleted':
+        return 'unverified'
+    plan = completion_plan(product, 'delete')
+    if not plan['verified']:
+        return 'unverified'
+    if plan['synchronous']:
+        return 'verified'
+    return 'verified' if observed_state in _GONE_STATES else 'unverified'
+
+
 def _reached(state, ready_state):
     if ready_state == 'gone':
         return state in _GONE_STATES
