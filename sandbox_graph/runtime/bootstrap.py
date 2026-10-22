@@ -3,7 +3,8 @@ from ..graphs.factory import build_work,build_definition
 from ..services.workflows import (WorkflowHandlers,run_definition,run_routers,
     group_definition,group_routers,analysis_definition,report_definition,linear_routers)
 from .agents import AgentGateway,AgentSupervisor
-from .worker import GraphJobHandler,ResumeJobHandler,RecoveryJobHandler,SupervisionJobHandler
+from ..services.remediation import NodeRemediationService
+from .worker import GraphJobHandler,ResumeJobHandler,RecoveryJobHandler,SupervisionJobHandler,RemedyJobHandler
 
 
 def build_job_handlers(repository,*,graph_ref,saver_factory,node_service_factory,
@@ -11,7 +12,7 @@ def build_job_handlers(repository,*,graph_ref,saver_factory,node_service_factory
                        owner='worker',max_work_concurrency=1,
                        delivery_finalizer=None,operation_service=None,
                        agent_gateway=None,agent_allowed_fields=(),agent_budget=None,agent_allowlists=None,
-                       agent_fields_by_node=None,agent_accessible_evidence=()):
+                       agent_fields_by_node=None,agent_accessible_evidence=(),max_node_attempts=2):
     """Build all five graphs for one immutable deployed graph version.
 
     node_service_factory(token, activation) supplies registered environment,
@@ -43,7 +44,10 @@ def build_job_handlers(repository,*,graph_ref,saver_factory,node_service_factory
     handlers['resume']=ResumeJobHandler(repository,handlers)
     supervisor=AgentSupervisor(repository,agent_gateway)
     handlers['supervision']=SupervisionJobHandler(supervisor,allowed_fields=agent_allowed_fields,budget=agent_budget,
-        accessible_evidence=agent_accessible_evidence,fields_by_node=agent_fields_by_node)
+        accessible_evidence=agent_accessible_evidence,fields_by_node=agent_fields_by_node,
+        remediation=NodeRemediationService(repository,max_attempts=max_node_attempts))
+    handlers['remedy']=RemedyJobHandler(repository,node_service_factory,
+        lease_seconds=lease_seconds,segment_seconds=segment_seconds)
     if operation_service is not None:
         recovery=RecoveryJobHandler(repository,operation_service,lease_seconds=lease_seconds,owner=owner)
         handlers.update(cleanup=recovery,reconcile=recovery)

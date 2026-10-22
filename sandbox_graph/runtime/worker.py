@@ -329,16 +329,65 @@ class Worker:
 
 class SupervisionJobHandler:
     """WF-04：owner agent 消费看护记录（有模型出提案，无模型显式记缺口），不轮询。"""
-    def __init__(self,supervisor,*,allowed_fields=(),budget=None,accessible_evidence=(),fields_by_node=None):
+    def __init__(self,supervisor,*,allowed_fields=(),budget=None,accessible_evidence=(),fields_by_node=None,remediation=None):
         self.supervisor=supervisor;self.allowed_fields=set(allowed_fields);self.budget=budget
         self.accessible_evidence=set(accessible_evidence);self.fields_by_node=fields_by_node
+        self.remediation=remediation
     async def __call__(self,job):
         owner=job['payload']['owner_agent_id']
         if self.budget is None:
             return {'execution_status':'blocked','error':{'code':'CONTRACT_MISSING','reason':'agent context budget required'}}
+        records=self.supervisor.pending(owner)
         decisions=await self.supervisor.review(owner,allowed_fields=self.allowed_fields,
             accessible_evidence=self.accessible_evidence,budget=self.budget,fields_by_node=self.fields_by_node)
-        return {'execution_status':'succeeded','decisions':decisions}
+        # 循环工程：agent 可据提案发起**有界**修复（新 attempt 重执行失败节点；不改证据）
+        remedies=[]
+        if self.remediation is not None:
+            for (key,record),decision in zip(records,decisions):
+                remedies.append(self.remediation.order(owner_agent_id=owner,work_ref=record['scope'],
+                    node_id=record['node_id'],run_ref=record['run_ref'],plan_ref=record['plan_ref'],
+                    graph_ref=record['graph_ref'],decision=decision,deadline=job['deadline']))
+        return {'execution_status':'succeeded','decisions':decisions,'remedies':remedies}
+
+
+class RemedyJobHandler:
+    """有界失败循环的执行端：以**新 attempt/新 activation** 重执行失败节点。
+
+    旧 receipt/证据不可变；重执行只会产生新 receipt。预算由 NodeRemediationService 把守。
+    """
+    def __init__(self,repository,node_service_factory,*,lease_seconds,segment_seconds,owner='remedy'):
+        self.repository=repository;self.node_service_factory=node_service_factory
+        self.lease_seconds=lease_seconds;self.segment_seconds=segment_seconds;self.owner=owner
+    async def __call__(self,job):
+        from ..persistence.repository import LeaseToken
+        from ..graphs.executor import NodeExecutor
+        from .driver import Activation
+        ref=job['payload']['remedy_ref']
+        with self.repository.transaction() as tx:
+            row=tx.get('remedy_orders',ref)
+            if not row: return {'execution_status':'blocked','error':{'code':'INPUT_MISSING','reason':'remedy order missing'}}
+            order=row['body']
+        token=LeaseToken(job['thread_id'],job['owner_epoch'],self.owner,job['deadline'])
+        activation=Activation(activation_id=job['activation_id'],run_id=order['run_ref'],thread_id=job['thread_id'],
+            scope=order['work_ref'],plan_ref=order['plan_ref'],graph_ref=order['graph_ref'],
+            input_refs=order.get('input_refs',{}),lease_seconds=self.lease_seconds,segment_seconds=self.segment_seconds)
+        handlers=self.node_service_factory(token,activation)
+        executor=NodeExecutor(self.repository,handlers,token)
+        state={'thread_id':job['thread_id'],'scope':order['work_ref'],'run_ref':order['run_ref'],
+               'plan_ref':order['plan_ref'],'graph_ref':order['graph_ref'],'activation_id':job['activation_id'],
+               'input_refs':order.get('input_refs',{}),'result_refs':{},
+               'node_visits':{order['node_id']:order['attempt']}}   # 新 visit => 新 receipt
+        try:
+            result,receipt=await executor.execute(order['node_id'],state)
+            status=result.execution_status
+        except StaleOwner:
+            raise
+        except Exception:
+            status='failed';receipt=None
+        with self.repository.transaction() as tx:
+            tx.put('agent_remedies',f'{ref}:outcome',{'status':status,'attempt':order['attempt'],
+                   'action_ref':order['action_ref'],'receipt_ref':receipt},immutable=True)
+        return {'execution_status':status,'output':{'remedy_ref':ref,'receipt_ref':receipt,'attempt':order['attempt']}}
 
 
 class RecoveryJobHandler:
