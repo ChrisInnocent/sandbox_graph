@@ -27,6 +27,8 @@
 
 用户已要求支持按优先级、环境组、沙箱类型、具体用例自选测试。下列为待审阅的选择与依赖规则；选择入口属于主图调度准备，不增加第六个业务阶段，也不改变五阶段定义。
 
+**边界（选择 ≠ 改图）**：本节的选择是**不改图**的范围筛选（[选择器](../../../sandbox_graph/planning/compiler.py) 的 `Selection` + `PlanCompiler`；`python -m sandbox_graph preview` 只读预览）；新增测试能力、改变节点依赖或增删图节点属于**图版本变更**（[GraphService](../../../sandbox_graph/interfaces/service.py) `propose_patch`→`RevisionService.activate_revision`，新版本＋新 run，不热切换），见 D08/D14、WF-36/WF-38。
+
 | 选择维度 | 含义与约束 |
 |---|---|
 | 优先级 | 选择目录中已标注优先级的用例；与“全部执行但高优先级先跑”的调度排序分开。具体枚举及逐项赋值待定 |

@@ -14,6 +14,7 @@
 | 增删改测试、节点、环境或计算方法 | [维护指南](docs/maintenance.md) |
 | 查看设计中的节点、子流程及自动化边界 | [节点工作流](openspec/changes/sandbox-evaluation-workflow/node-workflows.md)、[节点自动化职责](openspec/changes/sandbox-evaluation-workflow/node-automation.md) |
 | 判断当前哪些已实现、哪些尚未验收 | [交付记录与缺口](docs/verification/README.md)、[任务清单](openspec/changes/sandbox-evaluation-workflow/tasks.md) |
+| 选择本轮执行范围 / 修改图 | [使用与维护指南 · 选择范围 ≠ 修改图](docs/maintenance.md) |
 | 在真实 PostgreSQL / 三产品 / 特权机验收 | [真实环境验收操作手册](docs/acceptance-manual.md) |
 | 查可选指标与可调背景条件、逐场景规格 | [逐场景详细规格](openspec/changes/sandbox-evaluation-workflow/scenario-spec.md)（指标目录 RT-44/BCD-15、条件矩阵 RT-45/BCD-16） |
 | 审阅编排图引擎差距与覆盖 | [差距清单](docs/orchestration/gap-analysis.md)、[ORC 覆盖账本](docs/orchestration/orc-coverage.md)、[来源语义审计](docs/source-audit/alignment.md) |
@@ -22,6 +23,7 @@
 
 - **单用例执行**：`sandbox_bench.runner case` 接入真实环境配置，执行、校验和封存证据；`verify`、`recompute` 用于离线复核。需要部署证据、来源和对应能力，方法出现在目录中不等于该部署已验证支持。
 - **CLI 子命令**：`run`／`cleanup`（配置驱动发压／清理）、`case`（单用例 N00–N10）、`verify`／`recompute`（离线复核）、`resolve`／`build`（来源只读解析／B00 构建）、`endpoint`（创建端点拓扑解析）、`topology`（拓扑→声明组件清单）、`restore`（测试间环境还原）、`scenario`（指标/条件选择与背景条件校验）。退出码：`0` 成功；`2` blocked／incomplete／unverified；`1` 异常。
+- **执行范围选择 vs 图变更**：可按环境组／沙箱类型／场景／方法／优先级／拓扑／来源 kind 选择本轮范围，并支持排除与仅 `check`／`analysis`／`report` 阶段（`python -m sandbox_graph catalog`、`preview selection.json`，**只读**）；新增测试能力、改变节点依赖或增删图节点属于**图版本变更**（新版本＋新 run，不热切换），**不是选择**。按单个 N00–N10 子节点选也不支持。详见 [orchestration-design.md](openspec/changes/sandbox-evaluation-workflow/orchestration-design.md) D08/D14。
 - **完整编排组件**：已有五类 LangGraph、选择器、持久状态与 Worker 接口。正式运行需要 PostgreSQL 和实际环境服务装配，当前没有一条 `sandbox_graph start` 命令可自动部署并运行全部环境。
 - **验证边界**：已有本地协议、计算和恢复测试；尚无三产品真实性能结果。具体安装配置脚本、部分方法和故障验收仍未交付，详见上述缺口文档。
 

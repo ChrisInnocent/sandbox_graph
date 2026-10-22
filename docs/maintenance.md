@@ -2,6 +2,15 @@
 
 总入口见 [README](../README.md)。本指南说明现有工程的修改位置、变更步骤与验收要求，不代表尚未实现的能力已经可用。
 
+## 选择范围 ≠ 修改图（先分清）
+
+| 你想做的 | 选哪条路 | 入口 |
+|---|---|---|
+| 本次多测/少测、改优先级/环境组/类型/拓扑/来源 kind/阶段 | **选择（不改图）** | `Selection`（[选择器](../sandbox_graph/planning/compiler.py)）；`python -m sandbox_graph catalog` / `preview selection.json`（只读） |
+| 新增测试能力、改变节点依赖、增删图节点或连线 | **图版本变更（改图）** | `GraphService.propose_patch` → `RevisionService.activate_revision`；新版本＋新 run，**不热切换**（[编排设计](../openspec/changes/sandbox-evaluation-workflow/orchestration-design.md) D08/D14） |
+
+选择只在**既有图与授权范围**内筛选：同字段多值取并集、异字段取交集、再减排除；自动补齐**必要依赖**（如选 B04 补暂停 fixture）但**不扩为**其它场景的性能测试；`preview` 不改环境。按单个 N00–N10 子节点选也不属于选择——N00–N10 是每个工作单元的固定合同子图。详见 WF-28–30、WF-38。
+
 ## 先判断是哪种修改
 
 | 目标 | 首选修改位置 | 要检查什么 |

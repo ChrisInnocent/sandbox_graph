@@ -7,6 +7,7 @@
 - 完成判据为四终点 `API_COMPLETE / STATE_READY / SERVER_TERMINAL / EXEC_COMPLETE`（+ 白盒 `GUEST_READY`），逐用例声明；默认 `STATE_READY`。
 - 不适用／未采集标 `not_applicable`／`unavailable`，**不得填零**。
 - 成熟度：本文为设计与离线契约；未跑真实环境前 `environment_verified=false`。
+- **可选择性**：每个场景可按 `Selection` 轴（环境组/沙箱类型/场景/方法/优先级/拓扑/来源 kind/排除/阶段）被选或排除（WF-28–30、WF-38）；自动补齐**必要依赖**但不扩为其它场景性能测试；场景内的 N00–N10 子节点**不可单独摘选**；新增能力/改依赖属**图版本变更**，不是选择。
 
 ---
 

@@ -250,6 +250,8 @@ STOP、WAIT、RECON、CLEAN 是共同执行协议处理，不新增看护层。N
 
 计划未请求某扩展场景时不派发它；未指定具体测试条件时可以做结构预览，正式测量的必填合同保持 blocked。仅检查可输出环境报告后直接走范围核对与 F4；仅分析从有效输入进入 A1；仅报告从同版分析进入 F1。不能为了等待组结果而启动不存在的组任务。
 
+**边界（选择 ≠ 改图）**：D08 是**不改图**的范围筛选：`Selection`（环境组/沙箱类型/场景/方法/优先级/拓扑/来源 kind/排除/阶段）→ 有限计划；同维度并集、跨维度交集、再减排除；自动补齐**必要依赖**但不扩为其它场景性能测试；`preview` 只读不改环境。**新增方法、改变节点依赖或增删图节点**不属于选测，走 **D14 图版本变更**（新版本＋新 run，不热切换）。CLI：`python -m sandbox_graph catalog` / `preview selection.json`（WF-28–30、WF-38）。
+
 ### D09. 持久任务、事件与防丢唤醒
 
 任务字段：job_id、job_kind、scope_ref、thread_id、activation_id、dedupe_key、due_at、status、owner_epoch、lease_until、retry_count、deadline。job_kind 包括图激活、外部观察、清理、交付复核；不为每个性能请求创建控制面任务。
