@@ -32,6 +32,33 @@ def test_real_run_graph_dispatches_group_then_parks_without_waiting_for_group(re
         assert len(tx.scan('waits'))==1
 
 
+def test_validate_catalog_blocks_creation_case_without_source_identity(repository):
+    # Regression guard for issue #1: the success path (identity present) is covered by
+    # setup() above; this covers the block path that had no test.
+    compiler=PlanCompiler([Case(capability='supported',adapter_verified=True,case_id='case',group_id='G_A',sandbox_type='synthetic',scenario_id='B01',method_id='B01.TEMPLATE',priority='base',conditions=({'cpu':1},),conflict_domains=('host_A',))])
+    service=RunService(repository,compiler);plan=service.preview(Selection(),authorized_groups={'G_A'})
+    run=service.start('start',plan.hash,authorized_groups={'G_A'})
+    token=LeaseService(repository).acquire_thread(run.root_thread_id,'worker',100)
+    handlers=WorkflowHandlers(repository,deadline=1090)
+    executor=NodeExecutor(repository,handlers.mapping(),token)
+    state={'thread_id':run.root_thread_id,'scope':run.run_id,'run_ref':run.run_id,'plan_ref':plan.hash,'graph_ref':plan.graph_ref,'activation_id':'root','input_refs':{}}
+    graph=build_run(run_definition(),executor,routers=run_routers())
+    output=asyncio.run(graph.ainvoke(state))
+    assert output['results']['R1']['execution_status']=='blocked'
+    assert 'RP' not in output['results']
+    with repository.transaction() as tx:
+        codes=[(r['body']['result'].get('error') or {}).get('code') for r in tx.scan('receipts')]
+    assert 'SOURCE_IDENTITY_MISSING' in codes
+
+
+def test_validate_catalog_accepts_creation_case_with_source_identity(repository):
+    handlers,executor,state=setup(repository)
+    graph=build_run(run_definition(),executor,routers=run_routers())
+    output=asyncio.run(graph.ainvoke(state))
+    assert output['results']['R1']['execution_status']=='succeeded'
+    assert 'RP' in output['results']
+
+
 def test_analysis_missing_actual_statistics_service_is_blocked_not_success(repository):
     handlers,executor,state=setup(repository)
     state['input_refs']={'analysis_input_ref':'missing'}

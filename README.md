@@ -90,6 +90,7 @@ python3 -m venv .venv
 - 来源模板/快照/镜像及其证据；目标 CPU/内存规格及实际生效证据。
 - 方法、完成终点、请求总量、并发、超时、TTL、清理范围及有限预算。
 - 若测资源：真实进程 inventory、节点/组件归属、采样权限、采集器与稳态判据。
+- **创建方法（`B00.`/`B01.`）必须声明来源身份**：`artifact_kind`、`launch_path`、`producer_step`（可选 `cost_scope`）；缺失会在 R1 以 `SOURCE_IDENTITY_MISSING` 阻塞整个 run。这些字段**不能从方法名推断，也不能补默认值**，必须来自真实来源证据（详见 [BCD-13/D17](openspec/changes/sandbox-evaluation-workflow/benchmark-design.md)）。
 
 首次建议选一个已经核验支持的创建方法，例如 `B01.TEMPLATE`，使用 `STATE_READY`、请求总量 3、并发 1。这只是起步范围建议，不能代替真实来源、部署证明和安全容量。创建成功以约定状态为准，不强制执行命令。
 

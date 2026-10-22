@@ -55,6 +55,12 @@
 5. 无法证明外部已停止时保留 quarantine；已知资源按 scope 单独取消、清理并记录剩余。
 6. 新图只用新 run/thread，旧图保留 drain/cleanup 入口。已发布文件无账本引用属于 orphan，尚无自动 GC 服务。
 
+### quarantine / 残留 lease 目前没有自动回收
+
+`SchedulingService.dispatch_work` 对**任何存在的** `resource_leases` 行（`quarantine` 或崩溃残留 `reserved`）一律置 `queue_reason='resource_conflict'` 并永久跳过该 work；除 `LeaseService.release(..., closed=True)`（要求清理已核验）与 `release`/已验证清理路径会 `delete` 外，**没有回收/reconcile 入口**，因此一次未核验清理（例如缺资源证据导致 `resources` 未关闭）会持续阻塞后续所有 run。
+
+当前唯一处置是管理员核对证据后手工删除对应行：`DELETE FROM orchestration_records WHERE kind = 'resource_leases' AND key = '<conflict_domain>'`（先确认对应 scope 的外部效果已确实停止）。自动回收/reconcile 命令尚未实现；不要把它当作已具备的能力。
+
 缺原版本定义、原始文件、真实适配或授权合同应明确阻塞；不能换用当前图解释旧 checkpoint，也不能补空证据或测量值。
 
 ## 显式应用装配
