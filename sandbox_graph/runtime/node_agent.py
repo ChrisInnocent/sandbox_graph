@@ -48,11 +48,14 @@ class NodeAgent:
 
     def review(self, context, result):
         """规则复审：只产出 findings/decision，**不修改**执行结果（下级事实不可被覆盖）。"""
+        from ..services.quality_review import review_result_numbers
         findings = []
         if (result.data_status == 'valid' and not result.artifact_refs
                 and result.coverage_status != 'unsupported'):
             findings.append('valid data requires raw evidence')
         if result.execution_status == 'blocked' and result.error is None:
             findings.append('blocked requires an error record')
+        # 结果合理性：数值必须非负有限、布尔不算数
+        findings.extend(review_result_numbers(result.output if isinstance(result.output, dict) else {}))
         return NodeReview(node_id=self.node_id, owner_agent_id=self.owner_agent_id,
                           decision='reject' if findings else 'accept', findings=tuple(findings))

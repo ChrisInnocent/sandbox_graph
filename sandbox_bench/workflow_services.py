@@ -134,17 +134,22 @@ class AnalysisReportServices:
         with tempfile.TemporaryDirectory(prefix='sandbox-analysis-') as directory:
             paths, expected, gaps = self._materialize(input_ref, context.plan_ref, Path(directory), run_id=context.run_ref, alias_sink=aliases)
             facts = compare_cases(paths, analysis_input_ref=input_ref, expected_manifests=expected, case_aliases=aliases)
+        # 结果/报告合理性审视（归属 agent 职责）：只出 findings，不改事实。
+        from sandbox_graph.services.quality_review import review_report_facts
+        review_findings = review_report_facts(facts, expected_case_ids=set(expected))
         ref = self._commit(json.dumps(facts, sort_keys=True, allow_nan=False).encode(), context.scope)
         record = {'analysis_input_ref': input_ref, 'plan_ref': context.plan_ref,
                   'run_id': context.run_ref, 'facts_ref': ref.model_dump(mode='json'),
-                  'expected_manifests': expected, 'gaps': gaps, 'case_aliases': aliases}
+                  'expected_manifests': expected, 'gaps': gaps, 'case_aliases': aliases,
+                  'review_findings': review_findings}
         identity = canonical_hash(record)
         with self.repository.transaction() as tx:
             tx.assert_fence(token_for(context))
             tx.put('analysis_results', identity, record, immutable=True)
         return NodeResult(execution_status='succeeded', artifact_refs=(ref.artifact_id,),
                           data_status='insufficient' if gaps or not expected else 'unverified',
-                          output={'analysis_ref': identity, 'analysis_input_ref': input_ref})
+                          output={'analysis_ref': identity, 'analysis_input_ref': input_ref,
+                                  'review_findings': review_findings})
 
     async def export(self, context):
         identity = self._receipt_output(context, 'A3')['analysis_ref']
