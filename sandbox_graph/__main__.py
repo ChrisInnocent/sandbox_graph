@@ -36,11 +36,7 @@ def main():
         if not dsn: parser.error('SANDBOX_GRAPH_POSTGRES_DSN is required; no fallback backend')
         repository=PostgresRepository(dsn)
         if args.command=='migrate':
-            import psycopg
-            from psycopg.rows import dict_row
-            from langgraph.checkpoint.postgres import PostgresSaver
             repository.migrate()
-            with psycopg.connect(dsn,autocommit=True,row_factory=dict_row) as conn: PostgresSaver(conn).setup()
             result={'migration':'complete','backend':'PostgreSQL'}
         elif args.command=='export-analysis':
             from .analysis_dump import dump_with_root

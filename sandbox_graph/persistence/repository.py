@@ -56,9 +56,16 @@ class PostgresRepository:
         self.dsn = dsn
 
     def migrate(self):
+        """Provision every engine table: native ledger plus LangGraph checkpointer tables.
+
+        issue #4：仅建 `orchestration_records`/`thread_leases` 会让驱动在首个 saver
+        查询时报 `UndefinedTable`。checkpointer 表必须在这里一并创建（幂等）。
+        """
+        from langgraph.checkpoint.postgres import PostgresSaver
         with psycopg.connect(self.dsn, autocommit=True) as conn:
             with conn.transaction():
                 conn.execute(MIGRATION)
+            PostgresSaver(conn).setup()
 
     @contextmanager
     def transaction(self):
