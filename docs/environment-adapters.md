@@ -18,6 +18,32 @@
 
 **红线**：测量运行中 **E1/E2 必经**（组图 `G0→E1→E2` 无条件）；**C1–C3 仅在 drift 时触发**；`check-only` 不允许配置；`C2` 不执行未注册命令。
 
+运行流程（连接→探测→差异→计划→注册脚本→独立复检→释放/隔离）：
+
+```mermaid
+flowchart TD
+    G0["G0 恢复组状态"] --> E1["E1 connect<br/>只读连接/认证/身份核验"]
+    E1 --> E1Q{"connected ∧ authenticated<br/>∧ identity_confirmed？"}
+    E1Q -->|否| GB["GB 记录组阻塞及证据"]
+    E1Q -->|是| E2["E2 inspect<br/>按角色核验组件与有效配置"]
+    E2 --> E2Q{"state？"}
+    E2Q -->|satisfied| T0["T0 进入测量"]
+    E2Q -->|drift| C1["C1 plan_changes<br/>成配置计划 + 锁冲突域租约"]
+    E2Q -->|unknown / 缺输入| GB
+    E2Q -.->|only_check| T8["T8 仅检查交付"]
+    C1 --> C1Q{"已验证适配<br/>∧ 非 check-only？"}
+    C1Q -->|否| GB
+    C1Q -->|是| C2["C2 apply<br/>OperationService 提交注册脚本"]
+    C2 --> C2Q{"terminal ∧ authoritative？"}
+    C2Q -->|否| GB
+    C2Q -->|是| C3["C3 verify<br/>独立复检 probe.inspect"]
+    C3 --> C3Q{"复检 satisfied？"}
+    C3Q -->|是| REL["释放冲突域租约"]
+    REL --> T0
+    C3Q -->|否| QUAR["quarantine 冲突域"]
+    QUAR --> GB
+```
+
 ### 已实现的产品无关公共底层（受控协议测试）
 
 | 能力 | 模块 |
