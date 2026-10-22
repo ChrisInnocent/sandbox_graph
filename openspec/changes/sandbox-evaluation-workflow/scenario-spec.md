@@ -84,6 +84,7 @@
 
 ### B04.MEMORY
 - **定义**：已暂停 fixture → 恢复 → 所选完成 → 首次有效工作；进程内 token 与文件 hash 双验。
+- **同步性**：**Kuasar 异步**（`Connect` 仅受理，须轮询到 `running`，`api_complete_s` 与 `state_ready_s` 分列）；**Cube／AgentENV 同步**（`cubelet.Create` 阻塞／*ready when returns*）。审计 [alignment §12](../../../docs/source-audit/alignment.md)。
 - **指标**：R `T-01、T-02、T-05、R-05、R-06`；O `H-03、S-01–S-05、A-05`；— `B-*、C-*`。
 - **条件**：R `N-01、N-04、SP-01、D-02、D-03、EP-02`；O `W-02、TL-01`；— `C-02/03/04、L-*`。
 - **正确性断言**：token 保留且不能靠磁盘重建；API／状态／首次工作时间分开。
@@ -98,6 +99,7 @@
 
 ### B05.FULL
 - **定义**：父操作与 child operation 分层；capture/publish/fanout 分段；FULL 源继续运行合同含恢复成本。
+- **同步性**：**Kuasar 无原生 fork**（`B05.NATIVE` unsupported）→ 组合 capture+create（成本记 B05.FULL）；**Cube `fork` 阻塞 fan-out**（`results.len()==count`）；**AgentENV fork 待实证**。审计 [alignment §12](../../../docs/source-audit/alignment.md)。
 - **指标**：R `T-01、T-02、H-03、R-01–R-06`；O `S-01–S-07、A-03、A-04`；— `B-*、C-*`（除密度 clone）。
 - **条件**：R `N-01、C-01、C-05、SP-01、D-02/03`；O `C-03/04、TL、W-02`；— `C-02、L-*`。
 - **正确性断言**：child 新身份与隔离写入；源／兄弟原值不变；HTTP 201 中每项单判；部分失败不重放整个 fork。
@@ -112,6 +114,7 @@
 
 ### B06.RUNNING / B06.PAUSED
 - **定义**：`DELETE → 完整 API → 逻辑不存在 → 逐拥有资源释放`。
+- **同步性**：**Kuasar 异步**（204 仅受理；`BeginSandboxDelete`→`deleting`→异步 finalizer→`dead`，删除时延=轮询到 gone/dead）；**Cube `sync:true` 同步**；**AgentENV `delete_sandbox().await` 阻塞同步**。审计 [alignment §12](../../../docs/source-audit/alignment.md)。
 - **指标**：R `T-01、T-02、R-05、A-03、A-04`；O `H-03、S-01–S-05`；— `T-05、B-*、C-*`。
 - **条件**：R `N-01、N-04、SP-01`（RUNNING/PAUSED 分别）；O `C-01、TL-01`；— `C-02/03、W-*、L-*`。
 - **正确性断言**：鉴权错误不当 404；共享模板引用不误删；再次删除只属对账，不补首次时延；残留走 A-04（还原扫描）。
@@ -135,6 +138,7 @@
 
 ### B08.LOCAL / B08.PUBLISHED
 - **定义**：实际触页＋文件标记 → capture → 必要 publish → 后验独立 restore。
+- **同步性**：**AgentENV `capture_snapshot().await` 同步**；**Kuasar `export` 要求先 pause，同步性待实证**；**Cube 等 Master，待实证**。审计 [alignment §12](../../../docs/source-audit/alignment.md)。
 - **指标**：R `T-01、T-02、A-01、A-02、R-05、R-06`；O `T-04、S-01–S-05、A-04、A-05`；— `B-*、C-*`。
 - **条件**：R `N-01、SP-01、D-02、D-03、W-02`；O `TL、C-01、DEP-01`；— `C-02/03、L-*`。
 - **正确性断言**：本地／远端就绪分开；源状态副作用记录；逻辑与新增物理大小分列，无证据不推算。

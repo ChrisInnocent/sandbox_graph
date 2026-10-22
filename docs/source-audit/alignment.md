@@ -410,3 +410,49 @@ fd 由 node 自身产生并沿进程链传递：
 - **与 create 一致的原则**：只测**同步**完成；异步入口（Kuasar 数据面 node create）必须轮询到 ready 再计为创建时延，或改用同步入口（Kuasar router）。
 
 **登记落点**：需求 `RT-23`／`RT-24`（暂停恢复合同与来源分层）；节点 `test-nodes.md` §5 B03；逐场景 `scenario-spec.md` §4 B03；审计见 `alignment.md` §9（create）与本节（pause）。
+
+## 12. 恢复／克隆／删除／快照的同步性审计
+
+2026-10-21 补查，纯源码审计。同一原则：**只测同步完成**；✅同步=调用返回已达终点；⏳异步=返回仅受理，须轮询到终点。
+
+| 操作 | Kuasar | CubeSandbox | AgentENV |
+|---|---|---|---|
+| 创建 | node ⏳（`starting`）／ router ✅（park→running） | ✅ | ✅ |
+| 暂停（§11） | ✅（node & router） | ✅ | ✅ |
+| 恢复 | ⏳（`Connect` 仅受理并调度异步 resume） | ✅ | ✅ |
+| 克隆 | 无原生 fork（`B05.NATIVE` unsupported）→ 组合 capture+create | ✅（`fork` 等 fan-out） | ✅（待实证） |
+| 删除 | ⏳（`deleting`→finalizer→`dead`） | ✅（`sync:true`） | ✅ |
+| 快照 | `export`（先 pause 后发布；同步性待实证） | API 等 Master（待实证） | ✅ |
+
+### 12.1 恢复
+
+- **Kuasar**：`POST /sandboxes/{id}/connect` → `Connect`（`orch.go` L1588）：`prepareStandaloneTarget` 同步解析/鉴权后 `ensureResumeAccepted`（L1699）**仅受理**；`prepareStandaloneTarget` 注释 *“before scheduling an asynchronous resume”* → **异步**，须轮询到 `running`。
+- **Cube**：`resume_sandbox`（`sandboxes.rs` L351）→ Master `resumeFromPauseSnapshot`（`sandbox_resume_pause.go` L286）→ `cubelet.Create(...)`（阻塞到 Cubelet 重建）→ **同步**。
+- **AgentENV**：`resume_sandbox` 注释 *“On success the sandbox is ready for use when this method returns.”*（`service.rs`）→ **同步**；并发 resume 经 `wait_for_transition(Resuming)`。
+
+### 12.2 克隆
+
+- **Kuasar**：无原生 clone 路由；`B05.NATIVE` 明确 unsupported；克隆以 capture+create 组合实现（成本记 `B05.FULL`）。
+- **Cube**：`fork`（`sandboxes.rs` L466）阻塞到 `cubemaster.fork_sandbox` 的 snapshot＋派生 fan-out 返回且 `results.len()==count` → **同步**。
+- **AgentENV**：`fork_post`（`sandbox.rs` L1409）→ 逐 child；同步性待实证（预期等派发完成）。
+
+### 12.3 删除
+
+- **Kuasar**：`DELETE /sandboxes/{id}` → `Kill`（`orch.go` L1126）→ `killSandboxLocked` → `acceptSandboxDeleteLocked`（`sandbox_finalizer.go` L22）：`BeginSandboxDelete`→`deleting`，`startSandboxDeleteFinalizer` **异步** goroutine → **204 仅受理**；`deleting`→`dead` 须轮询（restore §10 的残留核验即依赖此）。
+- **Cube**：`kill_sandbox`（`sandboxes.rs` L313）`DeleteSandboxRequest{ sync: Some(true) }` → **同步**。
+- **AgentENV**：`delete`（`sandbox.rs` L1382）→ `delete_sandbox().await`（`service.rs` L1067 阻塞到删完）→ **同步**。
+
+### 12.4 快照
+
+- **Kuasar**：`POST /sandboxes/{id}/export`（`api.go` L1226）→ `ExportSandbox`（`migrate.go` L36）**要求先 pause**（`sb.State != Paused` 报错），发布不可变结果；同步性待实证。
+- **Cube**：`POST /sandboxes/{id}/snapshots`（CubeAPI）→ 等 Master；同步性待实证。
+- **AgentENV**：`snapshots_post`（`sandbox.rs` L1772）→ `capture_snapshot(...).await` → **同步**。
+
+### 12.5 测量落点（统一原则）
+
+- **同步终点**：`API_COMPLETE` 即 `STATE_READY`（或逻辑不存在／已发布）。**异步产品必须轮询到终点**再计为对应时延。
+- **B04 恢复**：Kuasar 分列 `api_complete_s`（受理）与 `state_ready_s`（running）；Cube/AgentENV `API_COMPLETE≈STATE_READY`。
+- **B06 删除**：Kuasar 删除时延 = 轮询到 gone/dead；Cube/AgentENV 204 即已删。
+- 不得把“受理”当“完成”，不得用异步验收时延冒充同步时延。
+
+**登记落点**：需求 `RT-24`（来源分层的创建用例）／`RT-27`（删除多终点）；节点 `test-nodes.md` §5 B04、§6 B05/B06/B08；逐场景 `scenario-spec.md` §3–§9。
