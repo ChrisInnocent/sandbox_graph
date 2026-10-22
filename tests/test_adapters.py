@@ -175,3 +175,100 @@ class AdapterTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KuasarClusterTests(unittest.TestCase):
+    def setUp(self):
+        self.assertIsNotNone(adapters, "adapter implementation is missing")
+        self.secret_hex = "ab" * 32
+        self.env = patch.dict(os.environ, {"BENCH_TEST_KEY": "CONTROL", "KUASAR_SECRET": self.secret_hex})
+        self.env.start()
+        self.addCleanup(self.env.stop)
+        self.config = {"product": "kuasar", "api_url": "https://router.example",
+                       "data_url": "https://router.example", "api_key_env": "BENCH_TEST_KEY",
+                       "source": {"kind": "template", "id": "e2b-img-abc"}, "create_body": {},
+                       "kuasar_cluster": {"api_host": "api.router.example", "group": "grp-1",
+                                          "domain": "sbx.example", "api_secret_env": "KUASAR_SECRET"}}
+
+    def test_minted_key_matches_audited_wire_format(self):
+        import hashlib, hmac, struct
+        key = adapters._mint_cluster_key(bytes.fromhex(self.secret_hex), now=1700000000, nonce=b"\x01\x02\x03\x04")
+        self.assertTrue(key.startswith("e2b_") and key[4:] == key[4:].lower())
+        raw = bytes.fromhex(key[4:])
+        self.assertEqual(len(raw), 12 + 4 + 4 + 16)
+        secret = bytes.fromhex(self.secret_hex)
+        self.assertEqual(raw[:12], hashlib.sha256(secret).digest()[:12])
+        self.assertEqual(raw[12:16], struct.pack(">I", 1700000000))
+        self.assertEqual(raw[16:20], b"\x01\x02\x03\x04")
+        self.assertEqual(raw[20:], hmac.new(secret, raw[:20], hashlib.sha256).digest()[:16])
+
+    def test_cluster_config_requires_fields_and_mints_key(self):
+        config = {**self.config, "kuasar_cluster": {"group": "g"}}
+        with self.assertRaises(ValueError):
+            adapters.Adapter(config)
+        adapter = adapters.Adapter(self.config)
+        self.assertEqual(adapter.headers["Host"], "api.router.example")
+        self.assertEqual(adapter.headers["X-Kuasar-Sandbox-Group"], "grp-1")
+        self.assertTrue(adapter.headers["X-API-Key"].startswith("e2b_"))
+        self.assertEqual(adapter.headers["X-API-Key"], adapter.headers["X-API-Key"].lower())
+        # cluster 仅限 kuasar
+        with self.assertRaises(ValueError):
+            adapters.Adapter({**self.config, "product": "cubesandbox"})
+
+    def test_cluster_create_records_route_key_and_detail_injects_it(self):
+        adapter = adapters.Adapter(self.config)
+        with patch.object(adapters, "request", return_value=reply(
+                {"sandboxID": "s-1", "routeKey": "rk-1"}, status=201)) as req:
+            sb = adapter.create("run-1", 5)
+        self.assertEqual(sb["sandbox_id"], "s-1")
+        with patch.object(adapters, "request", return_value=reply({"state": "running"})) as req:
+            adapter.info(sb, 5)
+        self.assertEqual(req.call_args.kwargs["headers"]["X-Kuasar-Route-Key"], "rk-1")
+
+    def test_cluster_detail_without_route_key_is_rejected(self):
+        adapter = adapters.Adapter(self.config)
+        with self.assertRaises(ValueError):
+            adapter.info({"sandbox_id": "unknown"}, 5)
+
+    def test_cluster_execute_forwards_data_plane_headers(self):
+        adapter = adapters.Adapter(self.config)
+        with patch.object(adapters, "request", return_value=reply(
+                {"sandboxID": "s-1", "routeKey": "rk-1", "envdAccessToken": "tok"}, status=201)):
+            sb = adapter.create("run-1", 5)
+        adapter.execute = adapter.execute  # unchanged; just ensure headers built
+        connect_body = b""
+        with patch.object(adapters, "request", return_value=reply({"state": "running"})) as req:
+            # execute uses ConnectDecoder; a minimal non-connect body still captures headers before decoding
+            try:
+                adapter.execute(sb, "echo hi", 5)
+            except Exception:
+                pass
+        headers = req.call_args.kwargs["headers"]
+        self.assertEqual(headers["Host"], "49983-s-1.sbx.example")
+        self.assertEqual(headers["X-Kuasar-Sandbox-Group"], "grp-1")
+        self.assertEqual(headers["X-Kuasar-Route-Key"], "rk-1")
+        self.assertEqual(headers["X-Access-Token"], "tok")
+
+    def test_cluster_list_owned_uses_session_tracking(self):
+        adapter = adapters.Adapter(self.config)
+        with patch.object(adapters, "request", return_value=reply(
+                {"sandboxID": "s-1", "routeKey": "rk-1"}, status=201)):
+            adapter.create("run-1", 5)
+        with patch.object(adapters, "request", side_effect=AssertionError("cluster list must not call the API")):
+            owned = adapter.list_owned("run-1", 5)
+        self.assertEqual([row["sandbox_id"] for row in owned], ["s-1"])
+        self.assertEqual(adapter.list_owned("other-run", 5), [])
+
+    def test_cluster_effective_spec_reads_real_limits(self):
+        adapter = adapters.Adapter(self.config)
+        with patch.object(adapters, "request", return_value=reply(
+                {"sandboxID": "s-1", "routeKey": "rk-1"}, status=201)):
+            sb = adapter.create("run-1", 5)
+        with patch.object(adapters, "request", return_value=reply({"cpuCount": 4, "memoryMB": 8192})):
+            self.assertEqual(adapter.effective_spec(sb, 5), {"vcpus": 4, "memory_mib": 8192})
+
+    def test_noncluster_kuasar_still_downgrades_effective_spec(self):
+        config = {**self.config}; config.pop("kuasar_cluster")
+        adapter = adapters.Adapter(config)
+        with patch.object(adapters, "request", return_value=reply({"cpuCount": 4, "memoryMB": 8192})):
+            self.assertEqual(adapter.effective_spec({"sandbox_id": "s-1"}, 5), {"vcpus": None, "memory_mib": None})

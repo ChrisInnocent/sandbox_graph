@@ -1,10 +1,13 @@
 """Product-specific control/data-plane mappings for the audited checkouts."""
 import base64
 import copy
+import hashlib
+import hmac
 import json
 import math
 import os
 import re
+import struct
 import time
 from urllib.parse import quote, urlencode
 
@@ -42,6 +45,24 @@ def _kuasar_source(source):
     return f"e2b-{suffix}-{encoded}"
 
 
+def _mint_cluster_key(api_secret, *, now=None, nonce=None):
+    """Kuasar 集群 API 令牌：`e2b_` + hex(fp(12)‖ts(4)‖nonce(4)‖mac(16))。
+
+    与 `orchestrator/internal/apikey/apikey.go` 的 `Mint` 一致：
+    fp=SHA256(secret)[:12]、ts=大端 uint32 秒、nonce=4 字节、mac=HMAC-SHA256(secret, fp‖ts‖nonce)[:16]。
+    """
+    if not isinstance(api_secret, (bytes, bytearray)) or not api_secret:
+        raise ValueError("cluster API secret required")
+    secret = bytes(api_secret)
+    fp = hashlib.sha256(secret).digest()[:12]
+    ts = struct.pack(">I", int(time.time() if now is None else now) & 0xFFFFFFFF)
+    nonce = bytes(nonce) if nonce is not None else os.urandom(4)
+    if len(nonce) != 4:
+        raise ValueError("cluster key nonce must be 4 bytes")
+    mac = hmac.new(secret, fp + ts + nonce, hashlib.sha256).digest()[:16]
+    return "e2b_" + (fp + ts + nonce + mac).hex()
+
+
 class Adapter:
     def __init__(self, config):
         self.config = copy.deepcopy(config)
@@ -59,6 +80,31 @@ class Adapter:
             if not secret:
                 raise ValueError("API credential environment variable is missing")
             self.headers["X-API-Key"] = secret
+        # Kuasar 集群：控制面/数据面与单机差异大（Host/group/route-key/minted key）。
+        self._route_keys = {}
+        self._owned = {}
+        self.cluster = None
+        cluster = config.get("kuasar_cluster")
+        if cluster is not None:
+            if self.product != "kuasar":
+                raise ValueError("kuasar_cluster requires product kuasar")
+            if not isinstance(cluster, dict):
+                raise ValueError("kuasar_cluster must be a mapping")
+            for key in ("api_host", "group", "domain", "api_secret_env"):
+                if not isinstance(cluster.get(key), str) or not cluster[key]:
+                    raise ValueError(f"kuasar_cluster.{key} is required")
+            hex_secret = os.environ.get(cluster["api_secret_env"])
+            if not hex_secret:
+                raise ValueError("cluster API secret environment variable is missing")
+            try:
+                secret = bytes.fromhex(hex_secret)
+            except ValueError as error:
+                raise ValueError("cluster API secret must be hex-encoded") from error
+            self.cluster = {"api_host": cluster["api_host"], "group": cluster["group"],
+                            "domain": cluster["domain"]}
+            self.headers["Host"] = cluster["api_host"]
+            self.headers["X-Kuasar-Sandbox-Group"] = cluster["group"]
+            self.headers["X-API-Key"] = _mint_cluster_key(secret)
 
     def probe_topology(self, topology, timeout):
         """Read-only creation-entry topology probe (BCD-13 §13.4).
@@ -80,10 +126,16 @@ class Adapter:
         return {"topology": topology, "management_plane_present": declared,
                 "evidence": "declared"}
 
-    def _control(self, method, path, timeout, body=None):
+    def _control(self, method, path, timeout, body=None, *, sandbox_id=None):
         encoded = None if body is None else json.dumps(body, allow_nan=False).encode()
+        headers = dict(self.headers)
+        if self.cluster is not None and sandbox_id is not None:
+            key = self._route_keys.get(sandbox_id)
+            if not key:
+                raise ValueError("cluster request for an unknown sandbox has no route key")
+            headers["X-Kuasar-Route-Key"] = key
         return request(method, self.api_url + path, body=encoded,
-                       headers=self.headers, timeout=timeout)
+                       headers=headers, timeout=timeout)
 
     def create(self, run_id, timeout):
         source = self.config["source"]
@@ -104,11 +156,19 @@ class Adapter:
             body.pop("image", None)
             body["templateID"] = _kuasar_source(source) if self.product == "kuasar" else source["id"]
         response = self._control("POST", path, timeout, body)
-        return _sandbox(decode_json(response.body), response)
+        value = decode_json(response.body)
+        result = _sandbox(value, response)
+        if self.cluster is not None:
+            route = value.get("routeKey") or value.get("route_key")
+            if not isinstance(route, str) or not route:
+                raise ValueError("kuasar cluster create must return a route key")
+            self._route_keys[result["sandbox_id"]] = route
+            self._owned.setdefault(run_id, set()).add(result["sandbox_id"])
+        return result
 
     def info(self, sandbox, timeout):
         path = "/sandboxes/" + quote(sandbox["sandbox_id"], safe="")
-        response = self._control("GET", path, timeout)
+        response = self._control("GET", path, timeout, sandbox_id=sandbox["sandbox_id"])
         data = decode_json(response.body)
         if not isinstance(data, dict):
             raise ValueError("invalid sandbox detail")
@@ -131,6 +191,13 @@ class Adapter:
             headers.update({"x-agentenv-sandbox-id": sid, "x-agentenv-target-port": "49983"})
         elif self.product == "kuasar":
             headers.update({"E2b-Sandbox-Id": sid, "E2b-Sandbox-Port": "49983"})
+            if self.cluster is not None:
+                key = self._route_keys.get(sid)
+                if not key:
+                    raise ValueError("cluster data-plane request requires the sandbox route key")
+                headers["Host"] = f"49983-{sid}.{self.cluster['domain']}"
+                headers["X-Kuasar-Sandbox-Group"] = self.cluster["group"]
+                headers["X-Kuasar-Route-Key"] = key
         else:
             domain = self.config.get("domain") or private.get("domain")
             if not isinstance(domain, str) or not re.fullmatch(r"[A-Za-z0-9.-]+(?::[0-9]+)?", domain):
@@ -158,9 +225,13 @@ class Adapter:
         return result
 
     def delete(self, sandbox, timeout):
-        self._control("DELETE", "/sandboxes/" + quote(sandbox["sandbox_id"], safe=""), timeout)
+        self._control("DELETE", "/sandboxes/" + quote(sandbox["sandbox_id"], safe=""), timeout,
+                      sandbox_id=sandbox["sandbox_id"])
 
     def list_owned(self, run_id, timeout):
+        if self.cluster is not None:
+            # 集群 list 不带 per-run metadata tag；用会话内归属跟踪（create 时记录）。
+            return [{"sandbox_id": sid, "private": {}} for sid in sorted(self._owned.get(run_id, ()))]
         deadline = time.monotonic() + timeout
         result, ids, cursors = [], set(), set()
         query = {"limit": 100}
@@ -192,8 +263,8 @@ class Adapter:
 
     def effective_spec(self, sandbox, timeout):
         data = self.info(sandbox, timeout)
-        if self.product == "kuasar":
-            # Public detail currently contains API-wide defaults, not per-instance evidence.
+        if self.product == "kuasar" and self.cluster is None:
+            # 单机 public detail 仅含 API 级默认值，不是逐实例证据；集群可读真实额度。
             return {"vcpus": None, "memory_mib": None}
         cpu = data.get("cpuCount")
         if self.product == "cubesandbox" and data.get("cpuMilli") is not None:
@@ -212,7 +283,7 @@ class Adapter:
     def pause(self, sandbox, timeout, *, memory=True):
         path = "/sandboxes/" + quote(sandbox["sandbox_id"], safe="") + "/pause"
         body = {"memory": memory} if self.product == "kuasar" else None
-        response = self._control("POST", path, timeout, body)
+        response = self._control("POST", path, timeout, body, sandbox_id=sandbox["sandbox_id"])
         return {"api_headers_s": response.headers_s, "api_complete_s": response.complete_s,
                 "memory_requested": memory, "completion": "api_only"}
 
@@ -221,7 +292,7 @@ class Adapter:
         body = {} if ttl is None else {"timeout": ttl}
         if self.product == "kuasar": body["memory"] = memory
         response = self._control("POST", "/sandboxes/" + quote(sandbox["sandbox_id"], safe="") + "/" + action,
-                                 timeout, body)
+                                 timeout, body, sandbox_id=sandbox["sandbox_id"])
         result = _sandbox(decode_json(response.body), response)
         if result["sandbox_id"] != sandbox["sandbox_id"]:
             raise ValueError("resume changed sandbox identity")
@@ -231,7 +302,7 @@ class Adapter:
     def renew(self, sandbox, ttl, timeout):
         if type(ttl) is not int or ttl <= 0: raise ValueError("positive TTL required")
         response = self._control("POST", "/sandboxes/" + quote(sandbox["sandbox_id"], safe="") + "/timeout",
-                                 timeout, {"timeout": ttl})
+                                 timeout, {"timeout": ttl}, sandbox_id=sandbox["sandbox_id"])
         return {"api_complete_s": response.complete_s, "ttl_from_now_s": ttl}
 
     def fork(self, sandbox, count, timeout):
