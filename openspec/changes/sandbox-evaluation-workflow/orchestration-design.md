@@ -598,6 +598,18 @@ N09 与运行级 cleanup 在按账本逐资源清理后，SHALL 执行**运行�
 - **与 D10 的关系**：扫描不释放租约；租约释放仍以实际清理显式完成为前提（租约到期不等于已还原）。
 - 离线验收：ORC-074／ORC-075。
 
+### D20. 操作同步性在 N05 完成观察中的落地
+
+N05 执行任何生命周期操作（创建/暂停/恢复/克隆/删除/快照）时，SHALL 按 `completion_plan(product, operation, topology)`（BCD-17）决定是否轮询：
+
+- **同步操作**：`API_COMPLETE` 即 `STATE_READY`，停表于接口返回；不得额外轮询造成重复计量。
+- **异步操作**：`api_complete_s` 记受理，轮询到 `ready_state`（`running`／`paused`／`gone`）记 `state_ready_s`，以 `state_ready_s` 为完成时延。
+- **同一操作不同入口**（Kuasar 创建 router vs node）分别记录同步性与终点，不合并。
+- `verified=False`（待实证）标 `unverified`，不默认同步/异步。
+- 与 D11 的关系：轮询是**只读观察**，不触发自动恢复；与 D19 还原扫描一致处理 `gone`。
+
+规格 RT-46，详设 BCD-17，独立测试 BCT-13。离线验收：ORC-076。
+
 ## Risks / Trade-offs
 
 - 持久队列比直接调用子图多一层协议 → 换取组间独立恢复和增量分析；用同一任务后端接口限制复杂度。

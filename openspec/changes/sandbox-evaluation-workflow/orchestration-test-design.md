@@ -257,6 +257,16 @@ ORC-071–073 只提升编排层合同覆盖，不声称 BCD-12／BCD-13 的脚�
 
 层级与目录：`tests/orchestration/unit/`（图侧）与 `tests/benchmark/unit/`（脚本侧）分开；oracle 独立、不共用生产归约。受控通过只提升代码契约状态，不声称真实环境已验证。
 
+### T15. 操作同步性映射的图编排契约测试（D20）
+
+对应 D20、RT-46 与 BCD-17／BCT-13。oracle 用假 adapter 状态序列与字面量表；不调用被测函数生成预期。
+
+| ID／层 | Given / 注入 | When | Then：精确预期 |
+|---|---|---|---|
+| ORC-076 L1/L4 | 同一产品的同步操作（暂停）与异步操作（Kuasar 恢复）、以及 Kuasar 创建的两个入口 | N05 完成观察 | 同步操作不轮询、`API_COMPLETE==STATE_READY`；异步操作 `api_complete_s` 与 `state_ready_s` 分列；入口分列；未验证项标 `unverified` |
+
+层级与目录：`tests/benchmark/unit/`（脚本侧）与 `tests/orchestration/unit/`（图侧）分开；oracle 独立、不共用生产归约。受控通过只提升代码契约状态，不声称真实环境已验证。
+
 ## Risks / Trade-offs
 
 - fake runner 可以掩盖真实 API 不幂等 → L3 明确模拟 unknown，L5 再验证产品关联能力。

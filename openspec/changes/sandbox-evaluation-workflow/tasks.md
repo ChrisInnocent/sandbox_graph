@@ -304,3 +304,12 @@
 
 - [x] 39.1 产出真实环境验收操作手册：[acceptance-manual.md](../../../docs/acceptance-manual.md)，按 PostgreSQL／三产品／特权机／真实发现／还原／B00／条件分类，逐项给出先决条件、命令、期望证据与验收判据，并标出待补测试文件。
 - [x] 39.2 补真实环境组测试文件骨构（离线可写、运行需 DSN/产品）：`test_repository.py`／`test_receipts.py`／`test_leases.py`／`test_fenced_saver.py`／`test_owner_takeover.py`／`test_revision_activation.py`／`test_recovery_integration.py`／`test_end_to_end.py`；缺 DSN/产品时显式 `skip`（不写 pass）。验收：无 DSN 时 skip；有环境时执行手册中的验收。
+
+## 40. 操作同步/异步终点映射
+
+规格 RT-46，详设 [benchmark-design.md](benchmark-design.md) BCD-17，测试合同 [benchmark-contract-design.md](benchmark-contract-design.md) BCT-13，图侧详设 [orchestration-design.md](orchestration-design.md) D20，图侧测试 [orchestration-test-design.md](orchestration-test-design.md) T15（ORC-076）。审计 [alignment.md §11/§12](../../../docs/source-audit/alignment.md)。
+
+- [x] 40.1 `sandbox_bench/operation_sync.py`：`completion_plan(product, operation, *, topology)` 返回同步性/端点/`ready_state`/`poll_required`/`verified`；`await_operation(adapter, handle, plan, ...)` 对异步操作轮询到 `ready_state`。验收：BCT-13-SYNC/ROUTER/POLL/GONE 通过；未覆盖→`verified=False`。
+- [x] 40.2 图侧 N05 接入：N05 按 `completion_plan` 决定是否轮询，同步不重复计量、异步分列 `api_complete_s`/`state_ready_s`，入口分列（D20）。验收：ORC-076 通过。
+- [x] 40.3 独立单元测试：`tests/benchmark/unit/test_operation_sync.py`（BCT-13）。验收：全组通过；字面量 oracle，不调用被测函数生成预期。
+- [ ] 40.4 真实环境：在三产品真实部署下确认暂停/恢复/删除/快照的同步性与终点（含 Kuasar router/node 与 AgentENV fork、Kuasar export、Cube snapshot 的待实证项）。验收：需真实环境；缺环境时保持 blocked。

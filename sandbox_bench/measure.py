@@ -14,6 +14,12 @@ def error_record(exc):
     return result
 
 
+def operation_completion(adapter, operation, *, topology=None):
+    """BCD-17 / D20：N05 按此决定操作是否轮询到终点（同步操作不重复计量）。"""
+    from .operation_sync import completion_plan
+    return completion_plan(getattr(adapter, "product", None), operation, topology=topology)
+
+
 def probe(adapter, handle, timeout, marker=None):
     marker = marker or "sandbox-bench-" + uuid.uuid4().hex
     result = adapter.execute(handle, "printf '%s' '" + marker + "'", timeout)

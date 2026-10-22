@@ -201,6 +201,19 @@ B00–B10 的所有子方法以场景文件中的参数化 case_id 展开，不�
 
 层级与目录：`tests/benchmark/contract/test_conditions.py`、`tests/benchmark/contract/test_build_density.py`（独立 marker，不共用数据库／故障夹具）。受控通过只提升代码契约状态，不声称真实环境验证。
 
+### BCT-13 操作同步/异步终点映射的独立测试合同
+
+对应 BCD-17、RT-46 与 tasks 组 40。oracle 为手写字面量表；不调用被测函数生成预期。
+
+| 编号 | 被测 | 独立 oracle | 关键断言 |
+|---|---|---|---|
+| BCT-13-SYNC | `completion_plan` | 字面量 product×operation 表 | 暂停同步、恢复异步（Kuasar）、删除异步（Kuasar）/同步（Cube/AgentENV）；未覆盖→`verified=False` |
+| BCT-13-ROUTER | Kuasar create 入口 | router vs node_direct | router 同步、node 异步，分别记录 |
+| BCT-13-POLL | `await_operation` | 假 adapter 状态序列 | 异步轮询到 `ready_state` 停表；同步不轮询 |
+| BCT-13-GONE | 删除轮询 | 假 adapter 消失序列 | `ready_state='gone'` 轮询到逻辑不存在 |
+
+层级与目录：`tests/benchmark/unit/test_operation_sync.py`（独立 marker，不共用数据库／故障夹具）。受控通过只提升代码契约状态，不声称真实环境验证。
+
 ## Risks / Trade-offs
 
 - 控制服务与产品都可能符合错误理解 → API fixture 关联固定源码证据，真实环境抽查形成独立证据。

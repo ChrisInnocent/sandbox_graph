@@ -687,3 +687,23 @@
 | TL-04 | warmup／预热时长 | s | 条件档位 |
 | EP-01 | 创建入口拓扑 | router／node／CLI（RT-42） | 条件声明 |
 | EP-02 | 完成判据 | API／STATE／SERVER／EXEC／GUEST | 条件声明 |
+
+### Requirement: RT-46 操作的同步/异步终点与同步时延口径
+
+系统 SHALL 为每个生命周期操作（创建、暂停、恢复、克隆、删除、快照）记录其**同步/异步终点**：同步终点表示调用返回时已达目标状态（`API_COMPLETE` 即 `STATE_READY`）；异步终点表示返回仅为**受理**，须轮询到目标状态。系统 SHALL 只把**同步完成**记为对应操作的时延；异步入口 SHALL 在目标状态（如 `running`／`paused`／逻辑不存在）下停表，不得把受理时延冒充完成时延。当同一操作在管理面/ingress 与数据面入口的同步性不同时（例如创建），系统 SHALL 分别记录入口与终点。无法从源码或实测确认同步性时 SHALL 标为未验证，不得按接口名称推断。
+
+#### Scenario: 同步操作直接停表
+- **WHEN** 暂停、删除等操作在所选产品为同步
+- **THEN** `API_COMPLETE` 即 `STATE_READY`，以调用返回停表，不再轮询
+
+#### Scenario: 异步受理须轮询到终点
+- **WHEN** 创建（Kuasar 数据面）或恢复（Kuasar）返回仅受理
+- **THEN** `api_complete_s`（受理）与 `state_ready_s`（到 ready）**分列**，以到达目标状态停表
+
+#### Scenario: 同一操作入口同步性不同
+- **WHEN** 创建的 router 入口同步而 node 入口异步
+- **THEN** 分别记录入口与同步性，不合并为同一方法或同一时延列
+
+#### Scenario: 无法确认同步性
+- **WHEN** 缺源码或实测证据
+- **THEN** 该操作端点标为未验证，不默认同步或异步

@@ -596,6 +596,39 @@ B00 构建场景**不需要并发构建请求密度**（无 B-02 为必需）。
 
 `validate_conditions(case)` 按场景 R 集检查上表字段存在；O 集缺省记为 `not_selected`。
 
+### BCD-17 操作同步/异步终点映射与同步时延
+
+每个操作按同步性决定是否轮询；同步操作 `API_COMPLETE == STATE_READY`，异步操作 `api_complete_s` 与 `state_ready_s` 分列。审计见 [alignment.md §11/§12](../../../docs/source-audit/alignment.md)。
+
+| 操作 | Kuasar | Cube | AgentENV |
+|---|---|---|---|
+| create | router 同步 / node 异步 | 同步 | 同步 |
+| pause | 同步 | 同步 | 同步 |
+| resume | 异步 | 同步 | 同步 |
+| clone | 无原生（`B05.NATIVE` unsupported） | 同步 | 待实证 |
+| delete | 异步 | 同步 | 同步 |
+| snapshot | 待实证（export 先 pause） | 待实证 | 同步 |
+
+#### 17.1 数据合同（`sandbox_bench/operation_sync.py`）
+
+```python
+def completion_plan(product, operation, *, topology=None) -> dict:
+    """{'synchronous':bool,'endpoint':'API_COMPLETE'|'STATE_READY','ready_state':str,
+    'poll_required':bool,'verified':bool}"""
+async def await_operation(adapter, handle, plan, *, timeout, poll_interval, sleep): ...
+```
+
+#### 17.2 度量规则
+
+- synchronous → 停表于 `API_COMPLETE`（= `STATE_READY`）；不轮询。
+- async → `api_complete_s` 记受理，轮询到 `ready_state` 记 `state_ready_s`，以 `state_ready_s` 为完成时延；`ready_state='gone'` 表示删除轮询到逻辑不存在/`dead`。
+- 分子分母同入口、同终点；同步与异步入口不合并。
+- `verified=False`（待实证）不得用于横向对比，除非实测确认。
+
+#### 17.3 接入
+
+无新子命令；`case` 在 N05 按 `completion_plan` 决定是否轮询；Kuasar 创建的 router/node 入口分别记录。未确认同步性标 `unverified`，不默认。
+
 ## Risks / Trade-offs
 
 - Python 发压／采样开销可能影响高并发 → 保存发生器指标、界限和实际负载；先证明正确，必要时替换底层引擎而不改数据合同。
