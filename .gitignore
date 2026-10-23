@@ -28,3 +28,6 @@
 /laptop-density-run/
 /res-demo/
 /matrix-run/
+
+# 临时工作产物（审查报告/handoff 等，不入库）
+/tmp/
