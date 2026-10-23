@@ -228,6 +228,20 @@ B00–B10 的所有子方法以场景文件中的参数化 case_id 展开，不�
 
 层级与目录：`tests/benchmark/unit/test_create_caliber.py`（独立 marker；手动时钟/计数器，不用真实 sleep 猜时序）。受控通过只提升代码契约状态，不声称与官方基准已完成对比。
 
+### BCT-15 资源观测合同与缺失显式化的独立测试合同
+
+对应 BCD-19、RT-48 与 tasks 组 50。oracle 为手写字面量用例与假采样器，不调用被测函数生成预期。
+
+| 编号 | 被测 | 独立 oracle | 关键断言 |
+|---|---|---|---|
+| BCT-15-REQUIRED | 未声明 `resources` 的需测方法 | 字面量用例（`resources=None`） | 结果 `evidence_gaps` 含 `resource_observation_not_requested`；不声称已测 PSS/CPU |
+| BCT-15-BLOCKED | 声明 `resources` 但 `sampler=None` | 字面量：`resources` 有、`sampler` 无 | `blocked/resource_sampler_required`，不静默跳过 |
+| BCT-15-INVENTORY | 装配期校验 | 假 inventory：缺 `boot_id`/`processes`/scope 不符 | 拒绝（`ValueError`/`blocked`），不构造采样器 |
+| BCT-15-NOZERO | 空资源序列 | 字面量：`resource_series=[]` | `unavailable`；数值为 `None`，**不得为 0**、不得从夹具推默认 |
+| BCT-15-WINDOW | 短寿命窗口 | 字面量：样本数 `< min_samples` | `insufficient_samples`/未验证；不补样 |
+
+层级与目录：`tests/benchmark/unit/test_resource_contract.py`（独立 marker；手工时钟与假采样器，不用真实 sleep 猜时序）。受控通过只提升代码契约状态，不声称已在真实环境采集到资源。
+
 ## Risks / Trade-offs
 
 - 控制服务与产品都可能符合错误理解 → API fixture 关联固定源码证据，真实环境抽查形成独立证据。

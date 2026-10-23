@@ -390,3 +390,15 @@
 - [ ] 49.3 在独立隔离环境完成 ALI-05/06 与 G4，并在验收环境执行 ALI-08/G6 激活前 smoke、激活后观察及回退。验收：真实候选失败后修订成功、真实隔离有效、bundle 身份一致；模拟结果不登记 backend_verified。
 - [ ] 49.4 对实际选择的应用内模型/编码 provider 做集成验收；若选择宿主 bridge，另做 ALI-09 幂等/查询/取消/usage/context 验收。验收：逐 provider 声明 verified/blocked/not_selected，不以 mock 证明已调用宿主 dispatch agent。
 - [ ] 49.5 汇总实施范围、剩余阻塞、门禁证明及可启用动作/profile，复核 OpenSpec strict 与文档链接；仅据实际证据勾选本清单。验收：设计存在、代码实现、离线验证、后端验证和真实适配验证明确分开，无未经证据的“全节点自动自愈已完成”表述。
+
+## 50. 资源观测合同强制与缺失显式化（issue #8）
+
+规格 [RT-48](specs/runtime-evaluation/spec.md)，详设 [benchmark-design.md](benchmark-design.md) BCD-19（接 BCD-09），测试合同 [benchmark-contract-design.md](benchmark-contract-design.md) BCT-15。
+
+- [ ] 50.1 `sandbox_bench/contracts.py`：明确 `ResourceContract` 字段；为需测资源方法（B09/B10 之外，至少 B01 或引入“显式放弃资源观测”声明位）增加强制规则/缺口入口。验收：BCT-15-REQUIRED。
+- [ ] 50.2 `sandbox_bench/session.py`：未声明 `resources` 时把跳过写入 `evidence_gaps`（`resource_observation_not_requested`）；声明而未装配采样器保持 `blocked/resource_sampler_required`。验收：BCT-15-REQUIRED/BLOCKED。
+- [ ] 50.3 `sandbox_bench/wiring.py`：装配期校验 inventory（`node/boot_id/processes/evidence_ref/scope` 一致）与 collector 绑定，不符即拒绝。验收：BCT-15-INVENTORY。
+- [ ] 50.4 `sandbox_bench/analysis.py`：缺 `resource_series` 的 `unavailable` reason 带缺口引用（未声明/未装配/样本不足）；数值保持 `None`，不补零、不推默认。验收：BCT-15-NOZERO。
+- [ ] 50.5 短寿命场景：对 B01 创建型显式声明资源窗口覆盖率或改用长寿命场景，不足记 `insufficient_samples`；同步 [scenario-spec.md](scenario-spec.md)。验收：BCT-15-WINDOW。
+- [ ] 50.6 独立单元测试：`tests/benchmark/unit/test_resource_contract.py`（BCT-15）。验收：全组通过；字面量 oracle，不调用被测函数生成预期。
+- [ ] 50.7 真实环境：在真实部署提供 inventory + collector 绑定，确认能采集到非零样本或显式 `insufficient_samples`。验收：需真实环境（135.214.237.243）；缺环境保持 blocked。

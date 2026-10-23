@@ -657,6 +657,30 @@ class Session:                      # 一个 run 内复用连接
 
 `Adapter` 持有 run 级 `Session`（不再每请求新建连接）；`create` 同时返回 `api_headers_s` 与 `api_complete_s`；N05/统计以 `caliber_version` 标注，缺预热/复用证据标 `unverified`。不改方法、条件与端点身份。
 
+### BCD-19 资源观测的声明、装配与缺失显式化（issue #8）
+
+真实 runner 的资源采集**已具备**（`wiring.configured_session` → `CollectorResourceSampler`/`ResourceSampler`，`session` 在 N04→N06→N07 采样），但真实用例未声明 `ResourceContract`、未提供进程 inventory 与 collector 绑定，导致采样**静默跳过**、结果只给无来源的 `missing_resource_evidence`。审计：`sandbox_bench/contracts.py`（`CaseContract.resources` 默认 `None`；只 B09/B10 强制）、`sandbox_bench/session.py`（`resources is None → completed/not_requested`；声明后 `sampler is None → blocked/resource_sampler_required`）、`sandbox_bench/wiring.py`（`ProcfsBinding`/`SourceBinding` 装配与 boot/scope 校验）、`sandbox_bench/analysis.py`（缺序列 → `missing_resource_evidence`/`missing_guest_definition`）。
+
+#### 19.1 数据合同
+
+- `CaseContract.resources: ResourceContract | None`（默认 `None`）：`interval_s/window_s/max_wait_s/max_gap_s/min_samples/inventory_ref` 等（见 BCD-09、BCD-15）。
+- wiring 绑定：`ProcfsBinding(kind=procfs|collector_procfs, inventory_path, inventory_sha256[, snapshot_path, proc_root, clock_ticks, max_pending])`；`SourceBinding(kind=collector_json, inventory_path, collector_ref)`；guest 扣减引用（`GuestDeductionProof`，BCD-09）。
+- 真实进程 inventory 需含 `node/boot_id/processes[{identity, roles/components, sandbox_id, pss/cpu}]/evidence_ref`。
+
+#### 19.2 强制与缺口显式化
+
+- 需测资源的方法集（至少 B09/B10；B01 等 SHALL 声明资源或**显式声明放弃资源观测**）——未声明即写入 `evidence_gaps`（`resource_observation_not_requested`）。
+- 声明后缺 sampler/inventory/collector 绑定 → `blocked`（保留既有 `resource_sampler_required`），**不得**退化为跳过。
+
+#### 19.3 装配与度量
+
+- `runner case` → `wiring.configured_session` 依绑定构造采样器并校验 boot/scope；`session` 在测量三段采样，`analysis` 汇入 `resources`。
+- 缺 `resource_series` 时 `unavailable` 的 `reason` SHALL **带缺口引用**（未声明／未装配／样本不足），不掩盖原因；数值保持 `None`，不补零、不从夹具推默认（BCD-09 红线）。
+
+#### 19.4 边界
+
+不改方法／条件／端点身份；未配置真实 inventory/collector 时保持 blocked，**不得以 mock 采样器冒充真实采集**（区分 `implemented` 与 `environment_verified`）。短寿命场景窗口不足按 RT-48 标 `insufficient_samples`。
+
 ## Risks / Trade-offs
 
 - Python 发压／采样开销可能影响高并发 → 保存发生器指标、界限和实际负载；先证明正确，必要时替换底层引擎而不改数据合同。

@@ -733,3 +733,31 @@
 #### Scenario: 缺口径证据
 - **WHEN** 未提供连接复用/预热/停表点证据
 - **THEN** 该测量标为未验证，不声称与官方可比
+
+### Requirement: RT-48 资源观测合同的强制声明与缺失显式化
+
+系统 SHALL 使批量窗口的资源采集（PSS/CPU）呈现为“已声明并采集”或“显式失败/缺口”，**不得静默跳过**：
+
+- 未声明 `CaseContract.resources` 的需测方法 SHALL 记入 `evidence_gaps`（如 `resource_observation_not_requested`），不得只给无来源的 `missing_resource_evidence`；
+- 声明后缺采样器或装配输入（进程 inventory、collector 绑定、guest 扣减）SHALL `blocked` 并报具体缺失原因；
+- 样本不足 SHALL 记 `unavailable/insufficient_samples`，数值保持缺失，不得补零或由夹具推默认。
+
+#### Scenario: 未声明资源合同的真实运行
+- **WHEN** 真实 runner 用例未声明 `resources` 却运行
+- **THEN** 结果含显式证据缺口（`resource_observation_not_requested`），且不声称已测得 PSS/CPU，而非只给无来源的 `missing_resource_evidence`
+
+#### Scenario: 声明资源合同但缺采样器或清单
+- **WHEN** 用例声明 `resources` 但未提供采样器、真实 inventory 或 collector 绑定
+- **THEN** 运行 `blocked` 并给出具体缺失原因（如 `resource_sampler_required`、inventory 不一致），不静默跳过
+
+#### Scenario: 清单身份或域不匹配
+- **WHEN** inventory 缺 `node/boot_id/processes/evidence_ref` 或与读数域（procfs boot/scope）不一致
+- **THEN** 拒绝装配/运行，不构造采样器
+
+#### Scenario: 短寿命场景窗口覆盖不足
+- **WHEN** 创建型沙箱存活期短于测量窗口所需（基线→稳态→关闭），或采样窗口参数/覆盖率不足（`interval_s/window_s/max_wait_s/max_gap_s/min_samples`）
+- **THEN** 标 `insufficient_samples`/未验证，或改用长寿命场景；不补样、不补零
+
+#### Scenario: 样本不足或缺失
+- **WHEN** 采样序列为空或低于 `min_samples`
+- **THEN** 资源结果记 `unavailable` 并附覆盖率与缺口引用，数值保持缺失，不从夹具推默认
