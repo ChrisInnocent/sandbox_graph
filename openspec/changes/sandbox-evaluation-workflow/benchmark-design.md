@@ -663,19 +663,19 @@ class Session:                      # 一个 run 内复用连接
 
 #### 19.1 数据合同
 
-- `CaseContract.resources: ResourceContract | None`（默认 `None`）：`interval_s/window_s/max_wait_s/max_gap_s/min_samples/inventory_ref` 等（见 BCD-09、BCD-15）。
+- `CaseContract.resources: ResourceContract | None`（默认 `None`）：`interval_s/window_s/max_wait_s/max_gap_s/min_samples/inventory_ref` 等（见 BCD-09、BCD-15）；`resource_observation_waived` 显式放弃观测。
 - wiring 绑定：`ProcfsBinding(kind=procfs|collector_procfs, inventory_path, inventory_sha256[, snapshot_path, proc_root, clock_ticks, max_pending])`；`SourceBinding(kind=collector_json, inventory_path, collector_ref)`；guest 扣减引用（`GuestDeductionProof`，BCD-09）。
 - 真实进程 inventory 需含 `node/boot_id/processes[{identity, roles/components, sandbox_id, pss/cpu}]/evidence_ref`。
 
 #### 19.2 强制与缺口显式化
 
-- 需测资源的方法集（至少 B09/B10；B01 等 SHALL 声明资源或**显式声明放弃资源观测**）——未声明即写入 `evidence_gaps`（`resource_observation_not_requested`）。
+- 需测资源的方法集（至少 B09/B10；B01 等 SHALL 声明资源或**显式声明放弃资源观测**）——未声明即写入资源证据缺口 `resource_gaps`（`resource_observation_not_requested`）；该缺口**不阻断 cleanup/seal**，只影响 `resources` 归因。
 - 声明后缺 sampler/inventory/collector 绑定 → `blocked`（保留既有 `resource_sampler_required`），**不得**退化为跳过。
 
 #### 19.3 装配与度量
 
 - `runner case` → `wiring.configured_session` 依绑定构造采样器并校验 boot/scope；`session` 在测量三段采样，`analysis` 汇入 `resources`。
-- 缺 `resource_series` 时 `unavailable` 的 `reason` SHALL **带缺口引用**（未声明／未装配／样本不足），不掩盖原因；数值保持 `None`，不补零、不从夹具推默认（BCD-09 红线）。
+- 缺 `resource_series` 时 `unavailable` 的 `reason` SHALL **带缺口引用**（`resource_gaps`：未声明／未装配／样本不足／`insufficient_samples`），不掩盖原因；数值保持 `None`，不补零、不从夹具推默认（BCD-09 红线）。
 
 #### 19.4 边界
 

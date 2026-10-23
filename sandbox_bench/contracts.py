@@ -163,9 +163,21 @@ class BackgroundConditions(StrictModel):
     warmup_s: Nonnegative | None = None                                      # TL-04
 
 
+RESOURCE_OBSERVING_METHOD_PREFIXES = ('B01.', 'B09.', 'B10.')
+RESOURCE_METRICS = ('pss_bytes', 'cpu_seconds', 'net_pss_bytes')
+
+
 class CaseContract(StrictModel):
     def digest(self) -> str:
         return self.content_hash()
+
+    def requires_resource_observation(self) -> bool:
+        """Whether this case is expected to observe PSS/CPU (RT-48)."""
+        if self.resource_observation_waived:
+            return False
+        if self.method_id.startswith(RESOURCE_OBSERVING_METHOD_PREFIXES):
+            return True
+        return bool(set(self.declared_metrics) & set(RESOURCE_METRICS))
 
     schema_version: Literal['case.v1']
     method_id: str
@@ -187,6 +199,8 @@ class CaseContract(StrictModel):
     graph_ref: str
     plan_ref: str
     resources: ResourceContract | None = None
+    # RT-48: explicit opt-out of resource observation (records no gap when set).
+    resource_observation_waived: bool = False
     density: DensityContract | None = None
     clone_count: Count | None = None
     source_must_run: bool = False

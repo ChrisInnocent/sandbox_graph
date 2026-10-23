@@ -738,8 +738,9 @@
 
 系统 SHALL 使批量窗口的资源采集（PSS/CPU）呈现为“已声明并采集”或“显式失败/缺口”，**不得静默跳过**：
 
-- 未声明 `CaseContract.resources` 的需测方法 SHALL 记入 `evidence_gaps`（如 `resource_observation_not_requested`），不得只给无来源的 `missing_resource_evidence`；
+- 未声明 `CaseContract.resources` 的需测方法 SHALL 记入资源证据缺口 `resource_gaps`（如 `resource_observation_not_requested`），且此类缺口不阻断 cleanup/seal，不得只给无来源的 `missing_resource_evidence`；
 - 声明后缺采样器或装配输入（进程 inventory、collector 绑定、guest 扣减）SHALL `blocked` 并报具体缺失原因；
+- 用例 SHALL 支持显式放弃资源观测（`CaseContract.resource_observation_waived`）；放弃后不记缺口。
 - 样本不足 SHALL 记 `unavailable/insufficient_samples`，数值保持缺失，不得补零或由夹具推默认。
 
 #### Scenario: 未声明资源合同的真实运行

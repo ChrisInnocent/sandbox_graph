@@ -545,7 +545,16 @@ class BenchSession:
             expected_sequence=sample.get('through_seq',sample['seq'])+1
             sample['source_seq']=sample.pop('seq')
             records['resource_series'].append(sample)
-        if self.case.resources:records['resource_max_gap_s']=self.case.resources.max_gap_s
+        resource_gaps=[]
+        observed=len([row for row in records['resource_series'] if row.get('kind')=='resource_sample'])
+        if self.case.resources is None and self.case.requires_resource_observation():
+            resource_gaps.append('resource_observation_not_requested')
+        if self.case.resources:
+            records['resource_min_samples']=self.case.resources.min_samples
+            records['resource_max_gap_s']=self.case.resources.max_gap_s
+            if observed<self.case.resources.min_samples:
+                resource_gaps.append(f'resource_insufficient_samples:{observed}<{self.case.resources.min_samples}')
+        records['resource_gaps']=resource_gaps
         steady_path=self.folder/'steady.json'
         if steady_path.exists():records['steady']=json.loads(steady_path.read_text()).get('steady')
         if self.config.get('guest_pss_proof') is not None:records['guest_pss_proof']=self.config['guest_pss_proof']

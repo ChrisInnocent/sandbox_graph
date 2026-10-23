@@ -233,17 +233,27 @@ def _density_curve(records):
                       for index,row in enumerate(density.get('trace',[]))]}
 
 
+def _resource_reason(gaps):
+    for gap in gaps:
+        if gap.startswith('resource_observation_not_requested'):
+            return 'resource_observation_not_requested'
+    return 'missing_resource_evidence'
+
+
 def analyze_case(records):
     records=_normalized(records)
     operations=[dict(row,repeat=row.get('repeat',1)) for row in records['operations']]
     window=records.get('window')
+    gaps=records.get('evidence_gaps',[])
+    resource_gaps=records.get('resource_gaps',[])
     result={'schema_version':'case_summary.v1','case_id':records['case_id'],
             'latency':summarize_repeats(operations),
             'quality':summarize_quality(operations,final_cohort=records.get('final_cohort')),
             'qualifications':_qualifications(records['assertions'],records.get('validation_policy')),
-            'throughput':None,'resources':{'status':'unavailable','reason':'missing_resource_evidence'}}
+            'throughput':None,'resources':{'status':'unavailable','reason':_resource_reason(resource_gaps),
+                                           'resource_gaps':resource_gaps}}
     result['qualifications']['notes']=records.get('qualification_notes',[])
-    result['qualifications']['gaps']=records.get('evidence_gaps',[])
+    result['qualifications']['gaps']=gaps
     result['density_curve']=_density_curve(records)
     if window is not None:
         args={k:v for k,v in window.items() if k not in {'start_s','end_s'}}
@@ -255,7 +265,16 @@ def analyze_case(records):
         filtered,_,_=attributed_series(records['resource_series'],index)
         attribution=attribution_report(records['resource_series'],records['inventory'])
         records={**records,'resource_series':filtered,'expected_components':expected_identity_keys(index)}
-    if records['resource_series']:
+    sample_count=len([row for row in records['resource_series'] if row.get('kind')=='resource_sample'])
+    min_samples=records.get('resource_min_samples')
+    if records['resource_series'] and min_samples is not None and sample_count<min_samples:
+        # RT-48: too few samples is an explicit gap, never a zero/nullable default.
+        result['resources']={'status':'unavailable','reason':'insufficient_samples',
+                             'sample_count':sample_count,'min_samples':min_samples,
+                             'resource_gaps':resource_gaps}
+        result['resources']['guest_net_pss']={'status':'unavailable','reason':'missing_guest_definition',
+                                              'raw_pss_bytes':None,'net_pss_bytes':None}
+    elif records['resource_series']:
         result['resources']=_attributed_resources(records,window)
         steady=records.get('steady')
         if isinstance(steady,dict) and steady.get('status')=='steady':
@@ -266,7 +285,8 @@ def analyze_case(records):
             if attribution['status']!='valid':
                 result['resources']['status']='partial'
                 result['resources']['attribution_reason']='unattributed_or_reused_processes_excluded'
-    else:result['resources']['guest_net_pss']={'status':'unavailable','reason':'missing_guest_definition','net_pss_bytes':None}
+    else:result['resources']['guest_net_pss']={'status':'unavailable','reason':'missing_guest_definition',
+                                               'raw_pss_bytes':None,'net_pss_bytes':None}
     cgroup_series=records.get('cgroup_series') or []
     if cgroup_series:
         from .metrics import cgroup_cpu_seconds, cgroup_true_peak

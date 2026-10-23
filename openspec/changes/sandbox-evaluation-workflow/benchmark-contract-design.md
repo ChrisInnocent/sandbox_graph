@@ -234,7 +234,7 @@ B00–B10 的所有子方法以场景文件中的参数化 case_id 展开，不�
 
 | 编号 | 被测 | 独立 oracle | 关键断言 |
 |---|---|---|---|
-| BCT-15-REQUIRED | 未声明 `resources` 的需测方法 | 字面量用例（`resources=None`） | 结果 `evidence_gaps` 含 `resource_observation_not_requested`；不声称已测 PSS/CPU |
+| BCT-15-REQUIRED | 未声明 `resources` 的需测方法 | 字面量用例（`resources=None`） | 结果 `resource_gaps` 含 `resource_observation_not_requested`（不阻断 cleanup）；不声称已测 PSS/CPU |
 | BCT-15-BLOCKED | 声明 `resources` 但 `sampler=None` | 字面量：`resources` 有、`sampler` 无 | `blocked/resource_sampler_required`，不静默跳过 |
 | BCT-15-INVENTORY | 装配期校验 | 假 inventory：缺 `boot_id`/`processes`/scope 不符 | 拒绝（`ValueError`/`blocked`），不构造采样器 |
 | BCT-15-NOZERO | 空资源序列 | 字面量：`resource_series=[]` | `unavailable`；数值为 `None`，**不得为 0**、不得从夹具推默认 |
