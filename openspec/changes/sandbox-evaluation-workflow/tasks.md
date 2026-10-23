@@ -393,12 +393,13 @@
 
 ## 50. 资源观测合同强制与缺失显式化（issue #8）
 
-规格 [RT-48](specs/runtime-evaluation/spec.md)，详设 [benchmark-design.md](benchmark-design.md) BCD-19（接 BCD-09），测试合同 [benchmark-contract-design.md](benchmark-contract-design.md) BCT-15。
+规格 [RT-48](specs/runtime-evaluation/spec.md)、[RT-49](specs/runtime-evaluation/spec.md)，详设 [benchmark-design.md](benchmark-design.md) BCD-19（接 BCD-09）、[scenario-spec.md](scenario-spec.md) §15，测试合同 [benchmark-contract-design.md](benchmark-contract-design.md) BCT-15。
 
 - [x] 50.1 `sandbox_bench/contracts.py`：明确 `ResourceContract` 字段；为需测资源方法（B09/B10 之外，至少 B01 或引入“显式放弃资源观测”声明位）增加强制规则/缺口入口。验收：BCT-15-REQUIRED。
 - [x] 50.2 `sandbox_bench/session.py`：未声明 `resources` 时把跳过写入资源证据缺口 `resource_gaps`（`resource_observation_not_requested`，**不阻断 cleanup/seal**）；声明而未装配采样器保持 `blocked/resource_sampler_required`。验收：BCT-15-REQUIRED/BLOCKED。
 - [x] 50.3 `sandbox_bench/wiring.py`：装配期校验 inventory（`node/boot_id/processes/evidence_ref/scope` 一致）与 collector 绑定，不符即拒绝。验收：BCT-15-INVENTORY。
 - [x] 50.4 `sandbox_bench/analysis.py`：缺 `resource_series` 的 `unavailable` reason 带缺口引用（`resource_gaps`：未声明/未装配/样本不足）；数值保持 `None`，不补零、不推默认。验收：BCT-15-NOZERO。
-- [ ] 50.5 短寿命场景：对 B01 创建型显式声明资源窗口覆盖率或改用长寿命场景，不足记 `insufficient_samples`；同步 [scenario-spec.md](scenario-spec.md)。验收：BCT-15-WINDOW。
+- [x] 50.5 短寿命场景：对 B01 创建型显式声明资源窗口覆盖率或改用长寿命场景，不足记 `insufficient_samples`；同步 [scenario-spec.md](scenario-spec.md)（§15 长寿命场景：基准 `B09.IDLE`，备选 `B07.STEADY`/`E03.MIXED_SOAK`/`B10.*`）。验收：BCT-15-WINDOW。
 - [x] 50.6 独立单元测试：`tests/benchmark/unit/test_resource_contract.py`（BCT-15）。验收：全组通过；字面量 oracle，不调用被测函数生成预期。
 - [ ] 50.7 真实环境：在真实部署提供 inventory + collector 绑定，确认能采集到非零样本或显式 `insufficient_samples`。验收：需真实环境（135.214.237.243）；缺环境保持 blocked。
+- [x] 50.8 口径分列（RT-49）：净底噪（去 Guest OS，`net_pss = raw_pss − guest_component_pss`）与每沙箱平均开支（含 Guest OS）分列、不混加；业界方法为 Firecracker `MemoryMonitor` 跳过 guest 内存区。同步 [scenario-spec.md](scenario-spec.md) §10/§11 与 [benchmark-design.md](benchmark-design.md) BCD-09。验收：BCT-15-CALIBER-SPLIT。

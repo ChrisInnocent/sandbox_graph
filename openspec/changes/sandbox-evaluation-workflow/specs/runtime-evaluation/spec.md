@@ -762,3 +762,23 @@
 #### Scenario: 样本不足或缺失
 - **WHEN** 采样序列为空或低于 `min_samples`
 - **THEN** 资源结果记 `unavailable` 并附覆盖率与缺口引用，数值保持缺失，不从夹具推默认
+
+### Requirement: RT-49 资源口径分列（净底噪 vs 每沙箱平均开支）
+
+系统 SHALL 将两类资源口径**分列**，不得互相替代或混加：
+
+- **净底噪** SHALL 为**去除 Guest OS** 的平台/VMM/控制面开销（`net_pss = raw_pss − guest_component_pss`）；缺 GuestDeductionProof 时净底噪标未验证，原始 PSS 仍保留；
+- **每沙箱平均资源开支** SHALL **包含 Guest OS**（每沙箱 raw PSS/CPU 增量），用于密度与容量；
+- 报告 SHALL 分别标注两类口径与 `formula_version`，不得以净底噪冒充每沙箱开支，也不得以含 guest 的总量冒充净底噪。
+
+#### Scenario: 净底噪缺 Guest 扣除证明
+- **WHEN** 未提供 GuestDeductionProof 就声称净底噪
+- **THEN** 净底噪标未验证，仅保留原始 PSS；不以原始 PSS 充当净底噪
+
+#### Scenario: 每沙箱开支含 Guest OS
+- **WHEN** 计算密度/容量的每沙箱平均资源开支
+- **THEN** 使用含 Guest OS 的每沙箱增量，并与净底噪分列
+
+#### Scenario: 两口径混用
+- **WHEN** 报告把净底噪与含 guest 的总量相加或互相替代
+- **THEN** 拒绝该结论（口径冲突），两口径分别列出

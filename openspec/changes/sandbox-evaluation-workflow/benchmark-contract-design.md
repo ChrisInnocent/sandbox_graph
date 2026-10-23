@@ -239,6 +239,7 @@ B00–B10 的所有子方法以场景文件中的参数化 case_id 展开，不�
 | BCT-15-INVENTORY | 装配期校验 | 假 inventory：缺 `boot_id`/`processes`/scope 不符 | 拒绝（`ValueError`/`blocked`），不构造采样器 |
 | BCT-15-NOZERO | 空资源序列 | 字面量：`resource_series=[]` | `unavailable`；数值为 `None`，**不得为 0**、不得从夹具推默认 |
 | BCT-15-WINDOW | 短寿命窗口 | 字面量：样本数 `< min_samples` | `insufficient_samples`/未验证；不补样 |
+| BCT-15-CALIBER-SPLIT | 净底噪 vs 每沙箱开支 | 字面量：raw=100、deduction=20 | `net_pss_bytes==80` 与 `raw_pss_bytes==100` 分列；缺证明→`net_pss_bytes=None` 而 raw 保留（`test_resources_procfs.py`） |
 
 层级与目录：`tests/benchmark/unit/test_resource_contract.py`（独立 marker；手工时钟与假采样器，不用真实 sleep 猜时序）。受控通过只提升代码契约状态，不声称已在真实环境采集到资源。
 

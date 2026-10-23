@@ -150,6 +150,8 @@
 
 ### B09.PLATFORM / B09.IDLE / B09.PAUSED
 - **定义**：零实例／空闲／暂停基线，用于密度外推与净开销。
+- **口径（与 §11 区分）**：**净底噪 = 去除 Guest OS** 的平台/VMM/控制面开销（`net_pss = raw_pss − guest_component_pss`，需 `GuestDeductionProof`）；**每沙箱平均资源开支（§11）= 包含 Guest OS** 的每沙箱增量。两者分列，不得互相替代或混加（RT-49）。
+- **业界方法**：Firecracker 官方 `MemoryMonitor` 测 VMM 进程内存时**显式跳过 guest 内存区**（"skip the guest's memory region, as the main interest is the VMM memory usage"，VMM 开销阈值 ~5 MiB）；含 guest 的总量另列。见 [memory.py](https://github.com/firecracker-microvm/firecracker/blob/main/tests/host_tools/memory.py) 与 [SPECIFICATION.md](https://github.com/firecracker-microvm/firecracker/blob/main/SPECIFICATION.md)。
 - **指标**：R `S-04、S-05、S-06、R-05`；O `S-01–S-03、A-03、A-04、C-04`；— `T-*（除准备）、B-*`。
 - **条件**：R `N-01、N-04、SP-01、DEP-01、TL-01`；O `W-02、TL-02、L-01`；— `C-02/03/04`。
 - **正确性断言**：底噪以 PSS 为基础；净底噪剔除 Guest OS 缺证明时不可用而原始 PSS 保留（Q12）；暂停卸载零值须有生命周期对账依据。
@@ -162,7 +164,7 @@
 - **定义**：两种口径——存量净增长（LIST）与选中成功数（READY）**独立停止状态机**。
 - **指标**：R `C-01、C-02、C-03、H-05、S-04–S-06、R-01–R-05`；O `H-01–H-04、C-04、A-04、S-01–S-03、S-07`；— `B-*`。
 - **条件**：R `N-01/N-02、C-01、C-03、C-05、SP-01、TL-01/03、DEP-01`；O `C-02/04、N-03/04、W-01/02、TL-02/04、L-01`；— `L-02`。
-- **正确性断言**：净增长不替换新增健康；旧实例损失与不完整列表可识别；不运行官方全局 reset。
+- **正确性断言**：净增长不替换新增健康；旧实例损失与不完整列表可识别；不运行官方全局 reset；**每沙箱平均资源开支含 Guest OS**（与 §10 净底噪口径分列，RT-49）。
 
 ### B10.PROJECTION / B10.FIXED_REQUESTS.WINDOW / B10.FIXED_REQUESTS.BATCH / B10.SLO_VERIFY
 - **PROJECTION**：两公式、整数 MiB 兼容取数、锁定 awk 参考舍入；每值带模型/窗口版本与非实测标签。
@@ -211,3 +213,20 @@
 **stage 轴**：`all`（完整五阶段）、`check`（仅环境检查）、`analysis`／`report`（从既有 run 仅重做分析／报告，**不走检查/配置/测量**）。
 
 **边界**：选择只在既有图与授权范围内筛选；自动补齐**必要依赖**但不扩为其它场景性能测试；按单个 N00–N10 子节点不可选；新增能力/改依赖属**图版本变更**（WF-38）。
+
+---
+
+## 15. 资源观测的长寿命场景
+
+资源观测需要沙箱在采样窗口内**持续存活**，以覆盖 `N04 基线 → N06 稳态（window_s 内 ≥ min_samples）→ N07 关闭`。
+
+| 用途 | 场景 | 说明 |
+|---|---|---|
+| **净底噪基准（推荐）** | **B09.IDLE** | 空闲保持、无负载，最贴合“净 PSS 稳态”（去 Guest OS，见 §10）；配套 `B09.PLATFORM`／`B09.PAUSED` |
+| 稳态运行 | `B07.STEADY` | 持续运行下的稳态命令吞吐 |
+| 长期混合 | `E03.MIXED_SOAK`（备选） | 长期混合生命周期运行（低优先级扩展） |
+| 多实例窗口 | `B10.FIXED_REQUESTS.WINDOW` 等 | 多实例持续存在的窗口型测量（含 Guest OS，见 §11） |
+| **创建型（不适合资源观测）** | `B01.*`／`B02.*` | 冷启动创建即删（0.13–0.36s），窗口覆盖不足 → 只测创建时延，资源记 `insufficient_samples`／未验证，**不补零** |
+
+- 资源观测 SHOULD 选用长寿命场景；创建型场景的资源结果 SHALL 显式标 `insufficient_samples`，不得从创建型沙箱凑资源结论（RT-48）。
+- 若需在创建型语义下测资源，须**另设“创建后保持到窗口结束再删”的变体**，不在 `B01.*` 内造数。

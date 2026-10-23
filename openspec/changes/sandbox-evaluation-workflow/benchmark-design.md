@@ -168,6 +168,12 @@ PSS 读 smaps_rollup；需要映射归属再读 smaps，权限不足不退回 RS
 
 GuestDeductionProof 输入精确定义的减项、同域映射、窗口、覆盖、方法和版本；`net_pss=raw_pss−guest_component_pss` 仅在同域且 0≤deduction≤raw 时定义，负值报矛盾不裁零。当前三产品均不预置减项估计常数。
 
+**底噪与每沙箱开支是两个口径，必须分列（RT-49）**：
+
+- **净底噪（去除 Guest OS）**：平台/VMM/控制面开销，即 `net_pss`（需 GuestDeductionProof）。业界方法参考 Firecracker 官方 `MemoryMonitor`：测 VMM 进程内存时**显式跳过 guest 内存区**（"skip the guest's memory region, as the main interest is the VMM memory usage"，`SPECIFICATION.md` 阈值 ~5 MiB）。
+- **每沙箱平均资源开支（含 Guest OS）**：每沙箱 raw PSS/CPU 增量（含 guest 内核/用户态），用于密度与容量（B10）。
+- 两者不得互相替代或混加；报告须分别标注口径与 `formula_version`，无 Guest 扣减证明时净底噪标未验证而原始 PSS 保留（Q12）。
+
 ### BCD-10 统计、吞吐及交付
 
 逐请求成功时延分位数使用有版本的线性插值位置 `(n−1)q`，保存 n、repeat 和失败数；n=0 为 N/A，不用超时截止值补成功样本。批次 wall/N 是 amortized，不是逐请求延迟；多组 P99 不求平均当总 P99，需原样本同组重算。
@@ -680,6 +686,10 @@ class Session:                      # 一个 run 内复用连接
 #### 19.4 边界
 
 不改方法／条件／端点身份；未配置真实 inventory/collector 时保持 blocked，**不得以 mock 采样器冒充真实采集**（区分 `implemented` 与 `environment_verified`）。短寿命场景窗口不足按 RT-48 标 `insufficient_samples`。
+
+#### 19.5 长寿命场景（资源观测基准）
+
+资源观测须覆盖 `N04 基线 → N06 稳态（`window_s` 内 ≥ `min_samples`）→ N07 关闭`，故选**长寿命场景**：基准 **`B09.IDLE`**（空闲净 PSS 稳态；配套 `B09.PLATFORM`/`B09.PAUSED`），备选 `B07.STEADY`、`E03.MIXED_SOAK`、`B10.FIXED_REQUESTS.WINDOW`。创建型 `B01.*`/`B02.*`（0.13–0.36s）**不产资源窗口**，其资源结果 SHALL 标 `insufficient_samples`/未验证，不得补零或从创建型凑资源结论；如需在创建型语义下测资源，须另设“创建后保持到窗口结束再删”的变体。口径区分（净底噪去 Guest OS / 每沙箱含 Guest OS）见 BCD-09、RT-49。
 
 ## Risks / Trade-offs
 
