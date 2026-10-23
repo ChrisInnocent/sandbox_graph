@@ -403,3 +403,4 @@
 - [x] 50.6 独立单元测试：`tests/benchmark/unit/test_resource_contract.py`（BCT-15）。验收：全组通过；字面量 oracle，不调用被测函数生成预期。
 - [ ] 50.7 真实环境：在真实部署提供 inventory + collector 绑定，确认能采集到非零样本或显式 `insufficient_samples`。验收：需真实环境（135.214.237.243）；缺环境保持 blocked。
 - [x] 50.8 口径分列（RT-49）：净底噪（去 Guest OS，`net_pss = raw_pss − guest_component_pss`）与每沙箱平均开支（含 Guest OS）分列、不混加；业界方法为 Firecracker `MemoryMonitor` 跳过 guest 内存区。同步 [scenario-spec.md](scenario-spec.md) §10/§11 与 [benchmark-design.md](benchmark-design.md) BCD-09。验收：BCT-15-CALIBER-SPLIT。
+- [ ] 50.9 创建后保持变体（planned）：新增注册方法（拟 `B01.*.HOLD`/`B02.*.HOLD`）——创建后保持到资源窗口覆盖 N04→N06→N07 再删，产出含 Guest OS 的每沙箱开支（RT-49）；经 Selection `methods` 纳入，实现属新增能力（图版本变更，WF-38）。规范见 [scenario-spec.md](scenario-spec.md) §15.1。验收：需 code 侧（`registry.METHODS` + 适配器/场景 + hold 步骤）与真机；未实现前保持 `planned`。
