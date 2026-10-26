@@ -1,0 +1,18 @@
+# 条件参数文件：小矩阵档（规格 × 并发 × 请求）
+#
+# 用途：用外部文件声明矩阵轴，脚本按格展开；可整体调小，便于快速回归。
+# 真实数值仍需真实环境；本档离线 mock 只验证编排与分格。
+schema_version: conditions.v1
+profile: matrix-small
+groups: 1
+works_per_group: 1
+spec: 2v2g
+concurrency: 1
+max_work_concurrency: 1
+requests: 2
+methods: [B01.TEMPLATE]
+axes:
+  specs: [2v2g, 2v4g]
+  concurrency: [1, 2]
+  requests: [2]
+notes: "2 规格 × 2 并发 × 1 请求 = 4 格"
