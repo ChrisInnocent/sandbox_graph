@@ -335,6 +335,13 @@ fd 由 node 自身产生并沿进程链传递：
 
 **登记落点（本轮）**：需求 `RT-42`；执行设计 `benchmark-design.md` BCD-13；测试合同 `benchmark-contract-design.md` BCT-10；节点 `test-nodes.md` §3.1/§3.2；任务 `tasks.md` 组 28。
 
+### 9.6 Kuasar resume(connect) 同步性：静态证据冲突，待运行确认
+
+- Kuasar **无 `/resume` 路由**；resume 走 `POST /sandboxes/{id}/connect`（body `memory`，`api.go:635`；注释 L287 "on connect/resume … then resumed"）。
+- 指向**同步**：`routesync/cluster.go:295` "ConnectResult is the synchronous result of an accepted CmdConnect"；`registry.go` PAUSED 分支 `SendCommandAndWait(CmdConnect)`；`Reserve` 会 park，且 `applyRoute` 仅在 `rec.State == StateReady` 时 `finish`。
+- 指向**异步**：`router.go:281` 注释 "the registry prepares the exact node-local target synchronously and the node resumes it **asynchronously**"。
+- 结论：**仅靠静态阅读无法裁定** → `sandbox_bench/operation_sync._TABLE` 保守置 `('kuasar','resume') = unverified`；测量侧无论同步/异步均**轮询到 `running` 再停表**。定论待真实运行（tasks 40.5）。
+
 ## 10. 测试间环境还原：三产品预热池语义与删除/残留审计
 
 2026-10-21 补查，纯源码审计，未运行任何沙箱。

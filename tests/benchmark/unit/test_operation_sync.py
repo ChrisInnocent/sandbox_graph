@@ -10,7 +10,6 @@ from sandbox_bench.operation_sync import await_operation, completion_plan
 
 SYNC_TABLE = {
     ('kuasar', 'pause'): (True, 'API_COMPLETE', 'paused'),
-    ('kuasar', 'resume'): (False, 'STATE_READY', 'running'),
     ('kuasar', 'delete'): (False, 'STATE_READY', 'gone'),
     ('cubesandbox', 'create'): (True, 'API_COMPLETE', 'running'),
     ('cubesandbox', 'pause'): (True, 'API_COMPLETE', 'paused'),
@@ -40,6 +39,8 @@ def test_kuasar_create_syncness_depends_on_entry():
 
 
 def test_uncovered_or_pending_operations_are_unverified():
+    # Kuasar resume(connect) 同步性证据冲突，保守 unverified（待真实运行，tasks 40.5）
+    assert completion_plan('kuasar', 'resume')['verified'] is False
     assert completion_plan('kuasar', 'snapshot')['verified'] is False    # export pending
     assert completion_plan('cubesandbox', 'snapshot')['verified'] is False
     assert completion_plan('agentenv', 'clone')['verified'] is False     # fork pending
@@ -59,7 +60,8 @@ class FakeAdapter:
 
 async def test_async_plan_polls_to_ready_state():
     row = await await_operation(FakeAdapter(['starting', 'starting', 'running']),
-                                {'sandbox_id': 's'}, completion_plan('kuasar', 'resume'),
+                                {'sandbox_id': 's'},
+                                completion_plan('kuasar', 'create', topology='node_direct'),
                                 api_complete_s=0.0, timeout=5, poll_interval=0)
     assert row['status'] == 'success' and row['polls'] == 3
     assert row['state_ready_s'] >= row['api_complete_s']
@@ -81,7 +83,7 @@ async def test_delete_poll_reaches_gone():
 
 async def test_async_timeout_is_not_success():
     row = await await_operation(FakeAdapter(['starting'] * 3), {'sandbox_id': 's'},
-                                completion_plan('kuasar', 'resume'),
+                                completion_plan('kuasar', 'create', topology='node_direct'),
                                 api_complete_s=0.0, timeout=0.001, poll_interval=0.001)
     assert row['status'] == 'timeout' and row['state_ready_s'] is None
 
@@ -93,7 +95,7 @@ def test_measure_exposes_the_n05_completion_plan():
         product = 'kuasar'
 
     assert operation_completion(A(), 'pause')['poll_required'] is False
-    assert operation_completion(A(), 'resume')['poll_required'] is True
+    assert operation_completion(A(), 'resume')['verified'] is False   # connect 同步性待真实确认
     assert operation_completion(A(), 'create', topology='router')['synchronous'] is True
     assert operation_completion(A(), 'create', topology='node_direct')['synchronous'] is False
     assert operation_completion(A(), 'snapshot')['verified'] is False

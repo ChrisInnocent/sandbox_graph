@@ -13,7 +13,11 @@ import time
 # (product, operation) -> (synchronous, endpoint, ready_state); None trio = unverified/pending.
 _TABLE = {
     ('kuasar', 'pause'): (True, 'API_COMPLETE', 'paused'),
-    ('kuasar', 'resume'): (False, 'STATE_READY', 'running'),
+    # resume == POST /sandboxes/{id}/connect（memory）。静态证据冲突：
+    # routesync/cluster.go 称 "ConnectResult is the synchronous result of an accepted CmdConnect"，
+    # 而 router.go:281 注释称 "the node resumes it asynchronously"；二者不能只靠读源码裁定。
+    # 保守置为 unverified，待真实运行确认（tasks 40.5）。无论同步/异步，测量侧均须轮询到 running 再停表。
+    ('kuasar', 'resume'): (None, None, None),
     ('kuasar', 'delete'): (False, 'STATE_READY', 'gone'),
     ('kuasar', 'clone'): (None, None, None),        # no native fork (B05.NATIVE unsupported)
     ('kuasar', 'snapshot'): (None, None, None),      # export (pause-first) pending

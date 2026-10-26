@@ -315,6 +315,7 @@
 - [x] 40.2 图侧 N05 接入：N05 按 `completion_plan` 决定是否轮询，同步不重复计量、异步分列 `api_complete_s`/`state_ready_s`，入口分列（D20）。验收：ORC-076 通过。
 - [x] 40.3 独立单元测试：`tests/benchmark/unit/test_operation_sync.py`（BCT-13）。验收：全组通过；字面量 oracle，不调用被测函数生成预期。
 - [ ] 40.4 真实环境：在三产品真实部署下确认暂停/恢复/删除/快照的同步性与终点（含 Kuasar router/node 与 AgentENV fork、Kuasar export、Cube snapshot 的待实证项）。验收：需真实环境；缺环境时保持 blocked。
+- [ ] 40.5 真实运行判定 Kuasar resume（`POST /sandboxes/{id}/connect`，memory）在 router 侧的同步性。静态证据冲突：`routesync/cluster.go:295` 称 "ConnectResult is the synchronous result of an accepted CmdConnect"，而 `router.go:281` 注释称 "the node resumes it asynchronously"。定论须用真实运行对比“返回时刻 vs `GET /sandboxes/{id}` 的 state”；未定前 `operation_sync._TABLE` 保守保持 `unverified`（已改），测量侧一律轮询到 `running` 再停表。验收：需真实 Kuasar（blocked）。
 
 ## 41. 创建时延客户端口径（对齐官方基准）
 
