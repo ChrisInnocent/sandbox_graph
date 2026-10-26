@@ -2,9 +2,9 @@
 
 ## Context
 
-2026-10-21，测试设计草案，全部用例为 planned；没有新增可执行测试、运行 LangGraph 或连接真实沙箱。被测对象是 [orchestration-design.md](orchestration-design.md) 的编排系统，而 [test-nodes.md](test-nodes.md) 定义被测沙箱的性能实验，两者不能混作一套验收。
+2026-10-21 初始测试设计；2026-10-23 对齐首批验证：纯生命周期模型/状态转换、ALU-21 租约及质量拒绝路由已本地运行，详见 [首批验证记录](../../../docs/verification/agent-lifecycle-first-batch/README.md)。后续预算/上下文/provider/修复/恢复及团队子交付见 [阶段回归](../../../docs/verification/agent-lifecycle-runtime/runtime-interim-20261023.md)，ORC-077–088 与 ALU/ALI 完整组合验收按任务逐项实施，未完成项仍保留；未执行真实 PostgreSQL/隔离/provider/沙箱验收。被测对象是 [orchestration-design.md](orchestration-design.md) 的编排系统，而 [test-nodes.md](test-nodes.md) 定义被测沙箱的性能实验，两者不能混作一套验收。
 
-测试依据为 WF-01–WF-36、环境阶段的路由／作用域要求、运行时场景合同的传递与测量证据边界。本文覆盖调度、状态、恢复、交付和测试 runner 接口；产品内部性能算法和真实 PSS 采集精度需要后续脚本及适配测试验证。
+测试依据为 WF-01–WF-39、环境阶段的路由／作用域要求、运行时场景合同的传递与测量证据边界。本文覆盖调度、状态、恢复、交付和测试 runner 接口；产品内部性能算法和真实 PSS 采集精度需要后续脚本及适配测试验证。
 
 ## Goals / Non-Goals
 
@@ -267,10 +267,40 @@ ORC-071–073 只提升编排层合同覆盖，不声称 BCD-12／BCD-13 的脚�
 
 层级与目录：`tests/benchmark/unit/`（脚本侧）与 `tests/orchestration/unit/`（图侧）分开；oracle 独立、不共用生产归约。受控通过只提升代码契约状态，不声称真实环境已验证。
 
+### T16. 节点自修复、受限派发与图演进契约测试（D21）
+
+以下 ORC 是需求级测试族；可实施的 20 组单元 ALU、9 组组合 ALI、文件/函数/夹具与 G0–G6 门禁详见 [agent-lifecycle-test-gates.md](agent-lifecycle-test-gates.md)，对应任务 42–49。
+
+对应 WF-04、WF-06、WF-21、WF-34–WF-36、WF-39。建议单元测试文件为 `tests/orchestration/unit/test_remediation_policy.py`、`test_change_proposals.py`；图集成为 `tests/orchestration/graphs/test_work_remediation.py`；持久任务/崩溃恢复为 `tests/orchestration/recovery/test_remediation_recovery.py`。使用 FakeClock、SpyModel、受控 TaskBackend/dispatcher、固定注册动作目录和独立 oracle；不连接真实沙箱，不调用模型服务，不用生产 validator 构造期望结果。
+
+| ID／层 | Given / 注入 | When | Then：精确预期 |
+|---|---|---|---|
+| ORC-077 L0 | 提案含可读 evidence refs、同作用域 node、注册动作与有效预算 | `validate_remediation_proposal` | 接受为 proposal，不改变 NodeResult、指标、原 receipt 或图定义 |
+| ORC-078 L0 | 提案缺证据、引用越组/跨 run、action 未注册或 affected_scope 扩大 | proposal validation | 拒绝；remedy job 数为 0；记录拒绝原因且已有状态不变 |
+| ORC-079 L0 | `max_attempts` 边界为 0、1、已耗尽与 deadline 到期 | policy evaluation | 无效策略拒绝；预算内只允许精确剩余次数；耗尽/过期不派发、不无限延长 deadline |
+| ORC-080 L0/L2 | 相同 request_id+相同内容重放；相同 ID 不同动作或证据 | enqueue remediation | 前者返回同一 job/receipt 且 submit 一次；后者冲突；多 worker 并发仅一份有效 attempt |
+| ORC-081 L1 | 任一节点失败、模型建议同 scope 注册动作；另注入无模型及越权建议 | supervision 与受限 dispatcher | 只诊断 allowlist 证据；越权提案拒绝；无模型不阻断已知规则；未注册可转隔离候选，无可行路线才 blocked；不得调用任意 shell、root dispatch 或其他 group/work |
+| ORC-082 L1 | 注册脚本产生成功后置条件、失败、超时、提交响应丢失四种结果 | remedy worker 执行及 postcheck | 成功才新建 visit/attempt 并从正确节点恢复；失败不伪装成功；未知先 reconcile 原 operation，不换 operation_id 重发 |
+| ORC-083 L1/L3 | 新 attempt 执行前后分别硬杀 worker，原 receipt 已提交与未提交各一变体 | worker 接管/重入 | 原证据不可变；完成的副作用最多一次；预算不重置；receipt/checkpoint 缺口按账本恢复或显式 blocked |
+| ORC-084 L1 | 有效样本的 `performance_status=fail`；模型建议重复测到 pass | diagnosis/dispatch | 测量 submit=0；原失败保留；只有新授权 measurement_generation 可产生新的测量 work |
+| ORC-085 L0/L1 | ChangeProposal 含范围/兼容/测试计划；另一提案尝试直接改活动图或源码 | proposal validation 与隔离候选构建 | 仅生成不可变候选；活动 graph_ref/code hash 不变；候选需静态检查和绑定摘要的单测/契约/回归结果 |
+| ORC-086 L0/L2 | 候选测试失败、低风险自动准入、敏感变更需授权、并发激活 | promotion/activation | 测试失败不得激活；只有策略允许者自动推进；敏感变更缺授权拒绝；同一 CAS 竞争只有一方成功并写新 run lineage |
+| ORC-087 L2/L3 | 切换期间旧 run 有已许可操作、未提交 job、未知操作和清理任务 | activate candidate and drain old version | 未获许可 job 被拒；已许可操作用旧版本对账/收尾；共享资源未闭合不放行；新图使用新 thread，不读取旧 checkpoint |
+| ORC-088 L0/L1 | 配置深度/总任务/并发/token 限额；模型建议递归 spawn agent team | dispatch child tasks | 超限拒绝；最大子任务数和深度可独立断言；确定性成功路径 SpyModel 与修复/team dispatcher 调用均为 0（正常业务派发不受此计数约束） |
+
+所有失败路径检查 execution/data/performance/cleanup 分离状态、原始事件、attempt 历史、任务账本与恢复引用。测试必须包含成功与失败的完整反例，不能仅断言最终某个状态等于 succeeded。ORC-077–088 的实现状态均为 planned；文档设计不表示已有测试文件或测试通过。真实宿主 agent dispatch API 若未提供，契约测试只证明隔离的 `ScopedRemediationDispatcher`，不声称已集成宿主 agent team。
+
 ## Risks / Trade-offs
 
 - fake runner 可以掩盖真实 API 不幂等 → L3 明确模拟 unknown，L5 再验证产品关联能力。
 - 时序测试容易抖动 → 用 barrier 与故障切点，真实超时只测边界所需部分。
 - 模型解释质量不能靠结构校验完全证明 → 测试验证事实边界与权限，语义复核仍保留独立人工／模型职责。
 - 只测最终成功会漏掉失败历史 → 所有验收查询原始 attempts、events 和资源账本，禁止仅看最后状态。
-- 尚无实现 → 本轮文档校验与设计审阅不得登记为 ORC 测试已通过。
+- T16 完整组合验收尚未完成 → 已运行的纯合同、租约和质量拒绝回归单独登记，不能换算成 ORC-077–088 全部通过；文档校验也不作为运行测试结果。
+
+### ORC-088 补齐后的执行边界
+
+- `test_bundle_launcher.py`：新解释器实际从指定 tree 导入，配置/tree 改变先拒绝、环境不透传无关秘密；它不等于真实 PG worker 验收。
+- `test_candidate_runtime.py`：execute 完成而独立 reconcile 未知时不得交付 pass-ready 结果。
+- `test_publication_hardkill.py`：15 个真实 PostgreSQL/SIGKILL 切点，保留原 request/operation 身份；未完成事务无半写，重入一次预算/结算/outbox；未知效果不能二次动作。缺 DSN 清晰 skip。
+- `verify_critical_mutations.py`：固定源码变异与对应 baseline nodeid；不可用 pytest 非零笼统代替断言抓错，测试自身摘要必须不变。与开发固定 profile 分开输出证据。

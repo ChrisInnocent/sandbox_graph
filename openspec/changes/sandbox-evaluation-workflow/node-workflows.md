@@ -1,12 +1,35 @@
 # 工作节点内部流程图
 
-2026-10-21，Mermaid 设计草案。本文与 [节点职责表](node-automation.md)、[场景合同](test-nodes.md) 共同定义节点；全局连线见 [design.md](design.md)。S 为确定性脚本，M 为模型判断，H 为必要人工输入。所有统一脚本尚为 planned，不表示本图已能执行。
+2026-10-24。本文与 [节点职责表](node-automation.md)、[场景合同](test-nodes.md) 共同定义节点；全局连线见 [design.md](design.md)。S 为确定性脚本，M 为模型判断，H 为必要人工输入。图和脚本已有实现，具体本地验证、产品缺口与真实后端边界见 [能力账本](../../../docs/orchestration/lifecycle-status.md)。
 
 图中的 subgraph 标题是工作节点 ID，内部小步骤不是另开一个 agent。每个节点有独立合同、状态和负责 agent；内部条件、循环、请求和采样由脚本完成。可复用工具不会扩大上下文；共享同一源码证据时传引用。
 
 这些业务内图的代码映射、checkpoint／账本／外部操作恢复及队列委派见 [编排详细设计](orchestration-design.md) D02、D05、D07–D12；代码层的失败切点与断言见 [编排测试设计](orchestration-test-design.md)。本文件仍是业务步骤真源，不因代码模块划分而新增 agent 层次。
 
 ## 0. GATE：每个节点继承的执行、失败与恢复协议
+
+生命周期监督层由 `NodeExecutor → LifecycleService → TaskBackend/Worker` 接入上述全部作用域。下图是实际服务职责的连线；具体业务节点内部子图保持各自合同。待配置的 provider/真实隔离、未登记的修复动作不能由图自动补成可用。
+
+```mermaid
+flowchart TD
+    N["S 节点脚本与规则校验"] -->|成功| D["S 保存原交付件"]
+    N -->|失败| L["S 归属、原操作与预算检查"]
+    L -->|效果未知| O["S 原 ID 对账／清理"]
+    O --> L
+    L -->|已登记规则| R["S 有界修复与独立后验"]
+    L -->|未知且启用模型| M["M 最小上下文诊断"]
+    M -->|登记动作| R
+    M -->|需改代码或图| C["M 候选编辑；S 冻结 revision"]
+    C --> G["S 候选外可信测试及原始日志"]
+    G -->|失败且预算允许| C
+    G -->|通过| V["M 独立复核；S 精确授权与 bundle 检查"]
+    V --> P["S CAS 建后继 run；旧版本 drain"]
+    R -->|后验通过| RP["S 按失效依赖编译恢复计划"]
+    RP --> N
+    L -->|预算耗尽／缺输入| W["S 显式等待或失败；必要时 H 补输入"]
+    W --> S["S 原身份安全收尾，保留证据"]
+    P --> N
+```
 
 下面所有节点的输入端继承 G0–G2，正常输出继承 G8–G9，任何内部步骤失败都走 GE。为便于阅读，不在每张业务图重复这些边。
 
@@ -663,3 +686,6 @@ RP 的版本激活内部图与确定性协议见 [orchestration-design.md](orche
 ## 执行代码与代码契约入口
 
 本节点的执行模块、算法及恢复合同见 [benchmark-design.md](benchmark-design.md)；测试这些代码的独立断言、夹具与工程测试见 [benchmark-contract-design.md](benchmark-contract-design.md)，任务见 [tasks.md](tasks.md) 15–26组。运行时参数缺失只阻塞对应真实用例，不阻止严格合同和算法实现。Kuasar B02.FULL 已补查公共builder路径（BCD-05）；目标部署可用性及实际适配另行验收。
+
+
+2026-10-24 实施接口补充：E1/E2 的只读宿主验收、C2 的镜像/容器/部分修复/ublk、C3 的参数证据分级、N04–N07 动态归属刷新及原操作私有日志接口，见[运行证据与恢复流程](../../../docs/environment-runtime-evidence.md)。这些步骤均为 S；缺声明/观测能力保留明确缺口，未知诊断才使用 M，变更授权沿用已有 H 记录。自动发现不新增 agent 层级，采样线程仍由原 N07 停止/join 看护。

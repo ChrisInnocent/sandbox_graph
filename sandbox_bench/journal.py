@@ -9,6 +9,7 @@ import fcntl
 import hashlib
 import json
 import os
+import stat
 from pathlib import Path
 import tempfile
 from contextlib import contextmanager
@@ -16,6 +17,7 @@ from contextlib import contextmanager
 
 class FileJournal:
     backend = 'local-file-single-host'
+    INLINE_RESULT_BYTES = 65536
 
     def __init__(self, folder, work_id, *, child_budget, parent_budget):
         if not work_id or any(type(x) is not int or x <= 0 for x in (child_budget,parent_budget)):
@@ -56,6 +58,57 @@ class FileJournal:
         seq=len(s['events'])+1
         s['events'].append({'event_id':f'{self.work_id}:{seq}','seq':seq,'kind':kind,**data})
 
+    def _read_result(self, ref):
+        digest=ref.get('sha256','')
+        size=ref.get('size_bytes')
+        if (set(ref)!={'sha256','size_bytes'} or len(digest)!=64
+                or any(c not in '0123456789abcdef' for c in digest)
+                or type(size) is not int or size<0):
+            raise ValueError('invalid terminal evidence reference')
+        path=self.folder/'results'/f'{digest}.json'
+        if path.parent.is_symlink():raise ValueError('terminal evidence directory symlink')
+        try:
+            fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW)
+            with os.fdopen(fd,'rb') as stream:
+                info=os.fstat(stream.fileno())
+                if not stat.S_ISREG(info.st_mode) or info.st_size!=size:
+                    raise ValueError('terminal evidence size mismatch')
+                raw=stream.read(size+1)
+        except OSError as error:
+            raise ValueError('terminal evidence unavailable') from error
+        if len(raw)!=size or hashlib.sha256(raw).hexdigest()!=digest:
+            raise ValueError('terminal evidence digest mismatch')
+        return json.loads(raw)
+
+    def _pack_result(self, result):
+        raw=json.dumps(result,sort_keys=True,separators=(',',':'),allow_nan=False).encode()
+        if len(raw)<=self.INLINE_RESULT_BYTES:return {'result':copy.deepcopy(result)}
+        ref={'sha256':hashlib.sha256(raw).hexdigest(),'size_bytes':len(raw)}
+        folder=self.folder/'results'
+        folder.mkdir(mode=0o700,exist_ok=True)
+        if folder.is_symlink():raise ValueError('terminal evidence directory symlink')
+        path=folder/f"{ref['sha256']}.json"
+        if path.exists() or path.is_symlink():
+            self._read_result(ref)
+        else:
+            fd,name=tempfile.mkstemp(prefix='.result-',dir=folder)
+            try:
+                with os.fdopen(fd,'wb') as stream:
+                    stream.write(raw);stream.flush();os.fsync(stream.fileno())
+                os.replace(name,path)
+                directory=os.open(folder,os.O_RDONLY)
+                try:os.fsync(directory)
+                finally:os.close(directory)
+            finally:
+                if os.path.exists(name):os.unlink(name)
+        return {'result_ref':ref}
+
+    def _expand_result(self, record):
+        if 'result_ref' in record:
+            if 'result' in record:raise ValueError('ambiguous terminal evidence')
+            record['result']=self._read_result(record.pop('result_ref'))
+        return record
+
     def reserve_sync(self,request_index,child_weight=1):
         if type(request_index) is not int or request_index<0 or type(child_weight) is not int or child_weight<=0:
             raise ValueError('invalid request slot')
@@ -83,11 +136,13 @@ class FileJournal:
         if result.get('status') not in allowed:raise ValueError('invalid terminal status')
         with self._transaction() as s:
             op=s['operations'][token]
-            if 'result' in op:
-                if op['result']!=result:raise ValueError('conflicting terminal evidence')
+            if 'result' in op or 'result_ref' in op:
+                if self._expand_result(copy.deepcopy(op))['result']!=result:
+                    raise ValueError('conflicting terminal evidence')
                 return
-            op['result']=copy.deepcopy(result);op['status']=result['status']
-            self._event(s,'terminal',operation_id=token,result=result)
+            packed=self._pack_result(result)
+            op.update(packed);op['status']=result['status']
+            self._event(s,'terminal',operation_id=token,**packed)
 
     async def reserve(self,request_index,child_weight=1):
         return self.reserve_sync(request_index,child_weight)
@@ -114,18 +169,37 @@ class FileJournal:
             if child_index>=op['weight']:raise ValueError('child outside reserved parent weight')
             children=op.setdefault('children',{});key=str(child_index)
             if key in children:
-                if children[key]!=record:raise ValueError('conflicting child terminal evidence')
+                if self._expand_result(copy.deepcopy(children[key]))!=record:
+                    raise ValueError('conflicting child terminal evidence')
                 return
             if op['status'] not in ('submission_started',):raise ValueError('child terminal without active parent')
+            record={**self._pack_result(value),'completed_at':completed_at}
             children[key]=record
             self._event(state,'child_terminal',operation_id=token,child_index=child_index,**record)
 
     def state(self):
-        with self._transaction() as s:return copy.deepcopy(s)
+        with self._transaction() as s:state=copy.deepcopy(s)
+        # Only terminal records use this schema; arbitrary user payloads are never
+        # interpreted as references. The public/replay/archive contract stays inline.
+        for op in state['operations'].values():
+            self._expand_result(op)
+            for child in op.get('children',{}).values():self._expand_result(child)
+        for event in state['events']:
+            if event['kind'] in ('terminal','child_terminal'):self._expand_result(event)
+        return state
 
-    def operation(self,token):return self.state()['operations'][token]
+    def operation(self,token):
+        with self._transaction() as s:op=copy.deepcopy(s['operations'][token])
+        self._expand_result(op)
+        for child in op.get('children',{}).values():self._expand_result(child)
+        return op
 
-    def collect(self,last_seq=0):return [x for x in self.state()['events'] if x['seq']>last_seq]
+    def collect(self,last_seq=0):
+        with self._transaction() as s:
+            events=copy.deepcopy([x for x in s['events'] if x['seq']>last_seq])
+        for event in events:
+            if event['kind'] in ('terminal','child_terminal'):self._expand_result(event)
+        return events
 
     def own(self,kind,resource_id,attributes):
         key=f'{kind}:{resource_id}'
@@ -137,7 +211,7 @@ class FileJournal:
                 s['resources'][key]=row;self._event(s,'resource_owned',resource_ref=key)
 
     def owned(self,environment):
-        rows=list(self.state()['resources'].values())
+        with self._transaction() as s:rows=copy.deepcopy(list(s['resources'].values()))
         if any(x['environment']!=environment for x in rows):raise ValueError('environment mismatch')
         return rows
 

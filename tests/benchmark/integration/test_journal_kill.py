@@ -7,7 +7,8 @@ import pytest
 from sandbox_bench.journal import FileJournal
 
 
-@pytest.mark.parametrize('cut', ['intent', 'external_effect', 'child_receipt'])
+@pytest.mark.parametrize('cut', ['intent', 'external_effect', 'child_receipt',
+                              'large_blob_before_terminal', 'large_terminal_commit'])
 def test_process_death_never_resets_child_budget_or_reissues_unknown(tmp_path, cut):
     script = r'''
 import asyncio, os, sys
@@ -22,12 +23,21 @@ with (root/'external-effect').open('x') as stream:
     stream.write('created:child-0');stream.flush();os.fsync(stream.fileno())
 j.own('sandbox','child-0',{'environment':'e'})
 if cut=='external_effect':os._exit(72)
+if cut.startswith('large_'):
+    if cut=='large_blob_before_terminal':
+        pack=j._pack_result
+        def killed_pack(value):
+            pack(value)
+            os._exit(74)
+        j._pack_result=killed_pack
+    j.terminal_sync(token,{'status':'success','value':{'raw_log':'raw-evidence\n'*100000}})
+    os._exit(75)
 asyncio.run(j.record_child_terminal(token,0,OperationResult('success',value={'sandbox_id':'child-0'}),1.0))
 os._exit(73)
 '''
     result = subprocess.run([sys.executable,'-c',script,str(tmp_path),cut],
                             cwd=Path(__file__).resolve().parents[3], timeout=10)
-    assert result.returncode in {71,72,73}
+    assert result.returncode in {71,72,73,74,75}
     journal = FileJournal(tmp_path/'ledger','w',child_budget=2,parent_budget=1)
     token = journal.reserve_sync(0,2)
     assert journal.state()['child_reserved']==2
@@ -39,4 +49,11 @@ os._exit(73)
         with pytest.raises(ValueError,match='environment'):journal.owned('foreign')
     if cut=='child_receipt':
         assert journal.operation(token)['children']['0']['result']['status']=='success'
-    assert journal.operation(token)['status']=='submission_started'
+    operation=journal.operation(token)
+    assert operation['status']==('success' if cut=='large_terminal_commit' else 'submission_started')
+    if cut.startswith('large_'):
+        assert journal.path.stat().st_size<65536
+        assert len(list((journal.folder/'results').glob('*.json')))==1
+        if cut=='large_terminal_commit':
+            assert operation['result']['value']['raw_log']=='raw-evidence\n'*100000
+        else:assert 'result' not in operation

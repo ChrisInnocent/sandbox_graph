@@ -57,7 +57,7 @@
 3. 需要复用结果时，通过明确的复用合同核验来源、规格、方法、终点、条件、脚本、有效期及接受状态；只建立证据引用，不能重复计入原始样本。
 4. 恢复原运行时先读取账本和 receipt，对未知外部操作执行 reconcile；不能清空输出目录或直接重复 POST。
 
-自动跨版本代码保留/回退工具仍未完整交付，部署者需要保留原版本运行环境。详见 [恢复与装配](orchestration/setup.md)、[复用与返工](orchestration/reuse-rework.md)、[图编排设计](../openspec/changes/sandbox-evaluation-workflow/orchestration-design.md)。
+不可变 bundle、worker 版本领取、后继 deployment 绑定和失败后新 run/thread 回退服务及 CLI 已交付；部署者仍需保留原版本 worker 以完成对账。真实发布/回退验收单列，不能把本地测试当现场证据。详见 [生命周期操作](orchestration/lifecycle-operations.md)、[复用与返工](orchestration/reuse-rework.md)、[图编排设计](../openspec/changes/sandbox-evaluation-workflow/orchestration-design.md)。
 
 ## 修改统计口径与报告
 

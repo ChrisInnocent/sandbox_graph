@@ -16,14 +16,22 @@ class EnvironmentRunnerGateway:
     def __init__(self, operation_service: Any, *, action_scripts: dict[str, ScriptRef]):
         self.operation_service = operation_service
         self.action_scripts = dict(action_scripts)
+        self.plan_refs = {}
+
+    def bind_plan(self, plan: RepairPlan, ref: str) -> None:
+        if not ref.startswith('artifact://'):
+            raise ValueError('published plan artifact required')
+        previous = self.plan_refs.get(plan.plan_hash)
+        if previous is not None and previous != ref:
+            raise ValueError('published plan reference changed')
+        self.plan_refs[plan.plan_hash] = ref
 
     @staticmethod
     def _operation_id(plan: RepairPlan, step: ActionStep) -> str:
         return f"environment:{plan.plan_hash}:{step.step_id}"
 
-    @staticmethod
-    def _payload(plan: RepairPlan, step: ActionStep) -> dict[str, Any]:
-        return {"plan_hash": plan.plan_hash, "plan_ref": f"artifact://environment/plans/{plan.plan_hash}",
+    def _payload(self, plan: RepairPlan, step: ActionStep) -> dict[str, Any]:
+        return {"plan_hash": plan.plan_hash, "plan_ref": self.plan_refs.get(plan.plan_hash, f"artifact://environment/plans/{plan.plan_hash}"),
                 "step": step.model_dump(mode="json")}
 
     def _build_operation(self, *, plan: RepairPlan, step: ActionStep, scope: str,
@@ -38,15 +46,14 @@ class EnvironmentRunnerGateway:
             script_ref=script, scope=scope, input=payload, deadline=deadline, node_id="C2",
             run_id=run_id, dispatch_generation=dispatch_generation)
 
-    @staticmethod
-    def _receipt(status: RunnerStatus, *, plan: RepairPlan, step: ActionStep) -> StepReceipt:
+    def _receipt(self, status: RunnerStatus, *, plan: RepairPlan, step: ActionStep) -> StepReceipt:
         now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         state_map = {"not_submitted": "accepted", "running": "running", "completed": "completed",
                      "failed": "failed", "cancelled": "cancelled", "unknown": "unknown"}
         certainty = ("none" if status.state == "not_submitted" else
                      "confirmed" if status.authoritative and status.state in {"completed", "failed", "cancelled"} else
                      "unknown")
-        payload = EnvironmentRunnerGateway._payload(plan, step)
+        payload = self._payload(plan, step)
         return StepReceipt(plan_ref=payload["plan_ref"], step_id=step.step_id,
             attempt=1, remote_handle=status.task_handle, started_at=now,
             finished_at=now if state_map[status.state] in {"completed", "failed", "cancelled"} else None,
@@ -70,9 +77,12 @@ class EnvironmentRunnerGateway:
             if row is None:
                 # Missing durable intent is not evidence that the remote side effect did not start.
                 # Fence the plan domains before returning an unknown receipt.
-                LeaseService(self.operation_service.repository).quarantine(
-                    plan.conflict_domains, scope=scope,
-                    reason="durable environment operation record missing; resubmission prohibited", token=token)
+                for domain in plan.conflict_domains:
+                    lease=tx.get('resource_leases',domain)
+                    if not lease or lease['body'].get('scope')!=scope:
+                        raise PermissionError('cannot quarantine another environment scope')
+                    tx.put('resource_leases',domain,lease['body']|{'status':'quarantine',
+                        'reason':'durable environment operation record missing; resubmission prohibited'})
                 status = RunnerStatus(state="unknown", authoritative=False,
                     reason="durable operation record is missing; plan domains quarantined")
             elif row["body"].get("scope") != scope:

@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "profile": "lifecycle-isolation",
+  "paths": [
+    "tests/orchestration/isolation/test_live_isolation.py"
+  ],
+  "required_ids": [
+    "tests/orchestration/isolation/test_live_isolation.py::test_real_isolation_canaries_and_original_process_cleanup"
+  ],
+  "requires": [
+    "SANDBOX_GRAPH_TEST_ISOLATION_CONTRACT"
+  ]
+}

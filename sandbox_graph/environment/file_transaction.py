@@ -18,6 +18,7 @@ class FileMutationReceipt:
     after_sha256: str
     backup_path: str | None
     mode: int
+    before_mode: int | None = None
 
 
 def _hash(data: bytes) -> str:
@@ -117,7 +118,39 @@ def replace_file(path: str | Path, content: bytes, *, expected_sha256: str | Non
                 temporary.unlink()
             except FileNotFoundError:
                 pass
-        return FileMutationReceipt(str(target), actual, _hash(content), str(backup) if backup else None, final_mode)
+        return FileMutationReceipt(str(target), actual, _hash(content), str(backup) if backup else None, final_mode,
+            stat.S_IMODE(info.st_mode) if info else None)
     finally:
         fcntl.flock(lock_fd, fcntl.LOCK_UN)
         os.close(lock_fd)
+
+
+def compensate_file(receipt:FileMutationReceipt,*,backup_dir):
+    """Restore the original bytes only if the installed bytes still match."""
+    target=Path(receipt.path);directory=Path(backup_dir).absolute()
+    if target.resolve()!=target or directory.resolve()!=directory:raise ValueError('compensation path unsafe')
+    if receipt.before_sha256 is not None:
+        backup=Path(receipt.backup_path or '')
+        if backup.parent!=directory or backup.resolve()!=backup:raise ValueError('before image outside private backup directory')
+        data,info=_read_target(backup)
+        if data is None or _hash(data)!=receipt.before_sha256 or info.st_mode&0o077:
+            raise ValueError('private before image digest/mode invalid')
+        current,_=_read_target(target)
+        if current is not None and _hash(current)==receipt.before_sha256:
+            return {'status':'completed','reused':True,'path':receipt.path,'restored_sha256':receipt.before_sha256}
+        if receipt.before_mode is None:raise ValueError('original file mode unavailable')
+        restored=replace_file(target,data,expected_sha256=receipt.after_sha256,backup_dir=directory,mode=receipt.before_mode)
+        return {'status':'completed','path':receipt.path,'restored_sha256':restored.after_sha256}
+    fd=os.open(target.parent/f'.{target.name}.sandbox-graph.lock',os.O_RDWR|os.O_CREAT|getattr(os,'O_NOFOLLOW',0),0o600)
+    try:
+        fcntl.flock(fd,fcntl.LOCK_EX)
+        current,info=_read_target(target)
+        if current is None:return {'status':'completed','reused':True,'path':receipt.path,'restored_sha256':None}
+        if _hash(current)!=receipt.after_sha256:raise RuntimeError('compensation compare-and-swap digest mismatch')
+        if info.st_uid!=os.geteuid() and os.geteuid()!=0:raise PermissionError('target owner differs')
+        target.unlink()
+        directory_fd=os.open(target.parent,os.O_RDONLY|getattr(os,'O_DIRECTORY',0))
+        try:os.fsync(directory_fd)
+        finally:os.close(directory_fd)
+        return {'status':'completed','path':receipt.path,'restored_sha256':None}
+    finally:os.close(fd)

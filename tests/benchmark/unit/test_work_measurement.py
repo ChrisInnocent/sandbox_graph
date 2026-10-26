@@ -25,4 +25,20 @@ async def test_n05_requires_an_active_observation_before_load(tmp_path):
 
 async def test_n07_is_a_noop_when_no_observation_was_ever_started(tmp_path):
     session = BenchSession(case('B01.TEMPLATE'), CONFIG, tmp_path)
-    assert (await session._N07()) == {'status': 'completed'}
+    result = await session._N07()
+    assert set(result) == {'status', 'sampler_receipt'}
+    assert result['status'] == 'completed'
+    receipt = result['sampler_receipt']
+    # No sampling effects, but closure still needs a truthful not-started proof.
+    expected = {'contract': 'bench-sampler.v1', 'state': 'not_started',
+                'capture_submitted': 0, 'capture_completed': 0,
+                'capture_worker_id': None, 'close_worker_id': None,
+                'loop_exit': 'not_started', 'executor_exit': 'not_started',
+                'close_exit': 'not_started', 'samples': {},
+                'interrupted': False, 'has_gaps': False}
+    assert {key: receipt[key] for key in expected} == expected
+    assert session._sample_task is None and session._sampler_pool is None
+    evidence = list((tmp_path / 'sampler_lifecycle').glob('*.json'))
+    assert len(evidence) == 1
+    assert (await session._N07()) == result
+    assert list((tmp_path / 'sampler_lifecycle').glob('*.json')) == evidence

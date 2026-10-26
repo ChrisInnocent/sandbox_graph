@@ -183,6 +183,8 @@ class BpfSchedSwitchCollector:
         self.ring_capacity = ring_capacity
         self._events = []
         self._bpf = None
+        self.lost_events = 0
+        self.dropped_events = 0
 
     @staticmethod
     def availability():
@@ -204,7 +206,7 @@ class BpfSchedSwitchCollector:
             raise RuntimeError(f'bpf sched collector unavailable: {status["reason"]}')
         from bcc import BPF  # local import: optional dependency
         self._bpf = BPF(text=_BCC_PROGRAM.split('BPF_SOURCE = r"""', 1)[1].rsplit('"""', 1)[0])
-        self._bpf['events'].open_perf_buffer(self._on_event, page_cnt=256)
+        self._bpf['events'].open_perf_buffer(self._on_event, page_cnt=256, lost_cb=self._on_lost)
         return status
 
     def _on_event(self, cpu, data, size):  # pragma: no cover - live only
@@ -212,12 +214,20 @@ class BpfSchedSwitchCollector:
         if len(self._events) < self.ring_capacity:
             self._events.append({'t_ns': int(event.t_ns), 'prev_pid': int(event.prev_pid),
                                  'next_pid': int(event.next_pid)})
+        else:
+            self.dropped_events += 1
+
+    def _on_lost(self, cpu, count):
+        self.lost_events += count
 
     def poll(self, timeout_ms=1000):  # pragma: no cover - live only
         if self._bpf is not None:
             self._bpf.perf_buffer_poll(timeout=timeout_ms)
 
     def stop(self):  # pragma: no cover - live only
+        if self._bpf is not None:
+            self._bpf.cleanup()
+            self._bpf = None
         events, self._events = self._events, []
         return events
 

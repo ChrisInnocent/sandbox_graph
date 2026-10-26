@@ -73,3 +73,13 @@ async def test_query_missing_durable_operation_is_unknown_and_not_resubmitted():
     assert receipt.result=='unknown' and receipt.effect_certainty=='unknown'
     assert service.repository.records[('resource_leases','host:node-1')]['status']=='quarantine'
     assert not service.calls
+
+@pytest.mark.asyncio
+async def test_gateway_uses_published_plan_artifact_and_rejects_rebinding():
+    plan,step=plan_step();ref=ScriptRef(script_id='cube.service.start',version='1',digest='c'*64)
+    service=Service(RunnerStatus(state='completed',authoritative=True))
+    gateway=EnvironmentRunnerGateway(service,action_scripts={step.action_ref:ref})
+    gateway.bind_plan(plan,'artifact://env/'+('d'*64))
+    receipt=await gateway.submit_step(plan=plan,step=step,scope='env',run_id='run',deadline=2000.,dispatch_generation=1,token=object())
+    assert receipt.plan_ref==service.calls[0].input['plan_ref']=='artifact://env/'+('d'*64)
+    with pytest.raises(ValueError,match='changed'):gateway.bind_plan(plan,'artifact://env/'+('e'*64))

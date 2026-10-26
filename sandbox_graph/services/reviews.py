@@ -2,6 +2,7 @@
 from uuid import uuid4
 from ..domain.models import DeliveryManifest,canonical_hash
 from ..persistence.repository import Conflict
+from ..runtime.tasks import business_job_kind
 
 
 class ReanalysisBudgetExhausted(Conflict):
@@ -95,7 +96,7 @@ class ReviewService:
         with self.repository.transaction() as tx:
             for job in tx.scan('jobs'):
                 body=job['body']
-                if body.get('job_kind')!='report' or body.get('status')!='pending': continue
+                if business_job_kind(body.get('job_kind',''))!='report' or body.get('status')!='pending': continue
                 record=tx.get('analysis_results',body['payload'].get('analysis_ref',''))
                 if not record or record['body'].get('plan_ref')!=plan_hash: continue
                 if record['body'].get('analysis_input_ref')==current_input_ref: continue

@@ -21,24 +21,25 @@ def _proposed(actions):
             'facts': [], 'hypotheses': [], 'affected_scope': [], 'required_decisions': []}}
 
 
-def test_registered_action_orders_a_bounded_remedy():
+def test_legacy_registered_action_requires_migration_contract():
     repo = MemoryRepository(FakeClock())
-    service = NodeRemediationService(repo, max_attempts=2)
-    result = _order(service, decision=_proposed(['resource.cleanup']))
-    assert result['status'] == 'ordered' and result['attempt'] == 1
+    result = _order(NodeRemediationService(repo), decision=_proposed(['resource.cleanup']))
+    assert result['status'] == 'blocked' and result['reason'] == 'lifecycle_contract_required'
+    assert result['recovery_entry'] == 'request_remediation'
     with repo.transaction() as tx:
-        jobs = [r['body'] for r in tx.scan('jobs') if r['body']['job_kind'] == 'remedy']
-        assert len(jobs) == 1 and jobs[0]['payload']['node_id'] == 'N09'
+        assert tx.scan('jobs') == []
 
 
-def test_attempts_are_bounded_per_work_and_node():
+def test_repeated_legacy_requests_neither_dispatch_nor_reset_allowance():
     repo = MemoryRepository(FakeClock())
     service = NodeRemediationService(repo, max_attempts=2)
-    assert _order(service, decision=_proposed(['resource.cleanup']))['status'] == 'ordered'
-    assert _order(service, decision=_proposed(['resource.cleanup']))['status'] == 'ordered'
-    third = _order(service, decision=_proposed(['resource.cleanup']))
-    assert third['status'] == 'blocked' and third['reason'] == 'remediation_exhausted'
+    with repo.transaction() as tx:
+        tx.put('node_attempts', 'work-1:N09', {'attempts': 2})
+    results = [_order(service, decision=_proposed(['resource.cleanup'])) for _ in range(3)]
+    assert all(r['status'] == 'blocked' for r in results)
     assert service.attempts('work-1', 'N09') == 2
+    with repo.transaction() as tx:
+        assert tx.scan('jobs') == []
 
 
 def test_unregistered_action_and_unknown_node_are_refused():
@@ -63,7 +64,7 @@ def test_known_registered_actions_are_the_only_ones():
     assert set(REGISTERED_NODE_ACTIONS) == {'N01', 'N07', 'N09'}
 
 
-def test_supervision_orders_remedy_and_remedy_reexecutes_failed_node():
+def test_legacy_supervision_preserves_proposal_without_unauthorized_dispatch():
     from sandbox_graph.domain.models import ErrorRecord
     from sandbox_graph.runtime.agents import AgentGateway, AgentSupervisor, ContextBudget
     from sandbox_graph.runtime.worker import RemedyJobHandler, SupervisionJobHandler
@@ -93,27 +94,15 @@ def test_supervision_orders_remedy_and_remedy_reexecutes_failed_node():
         remediation=NodeRemediationService(repo, max_attempts=2))
     out = asyncio.run(handler({'payload': {'owner_agent_id': 'agent:work:work-1'}, 'deadline': 10 ** 9}))
     assert out['decisions'][0]['status'] == 'proposed'
-    assert out['remedies'][0]['status'] == 'ordered'
-
+    assert out['remedies'][0]['status'] == 'blocked'
+    assert out['remedies'][0]['reason'] == 'lifecycle_contract_required'
     with repo.transaction() as tx:
-        rjob = [r['body'] for r in tx.scan('jobs') if r['body']['job_kind'] == 'remedy'][0]
-    LeaseService(repo).acquire_thread(rjob['thread_id'], 'remedy', 1000)
-
-    async def healing(context):
-        return NodeResult(execution_status='succeeded')
-
-    remedy = RemedyJobHandler(repo, lambda token, activation: {'N09': healing},
-                              lease_seconds=30, segment_seconds=20)
-    result = asyncio.run(remedy({'thread_id': rjob['thread_id'], 'owner_epoch': 1, 'deadline': 10 ** 9,
-                                 'activation_id': 'rem-1', 'payload': {'remedy_ref': rjob['payload']['remedy_ref']}}))
-    assert result['execution_status'] == 'succeeded'
-    with repo.transaction() as tx:
-        outcomes = [r['body'] for r in tx.scan('agent_remedies') if r['body'].get('status') == 'succeeded']
-        assert outcomes and outcomes[0]['attempt'] == 1
+        assert tx.scan('jobs') == []
+        assert len(tx.scan('receipts')) == 1  # Original failure remains immutable.
 
 
-def test_work_graph_resumes_from_the_given_node():
-    """修复后再入：从 resume_from 继续，不重跑 N00..。"""
+def test_work_graph_rejects_raw_resume_from():
+    """Caller-selected numeric continuation is never an execution capability."""
     import asyncio as _asyncio
     from sandbox_graph.graphs.factory import build_work
     from sandbox_graph.runtime.leases import LeaseService as _LS
@@ -134,5 +123,6 @@ def test_work_graph_resumes_from_the_given_node():
     graph = build_work(_NE(repo, handlers, token))
     state = {'thread_id': 'resume-thread', 'scope': 'w', 'run_ref': 'r', 'plan_ref': 'p', 'graph_ref': 'g',
              'activation_id': 'a', 'input_refs': {}, 'resume_from': 'N05'}
-    _asyncio.run(graph.ainvoke(state))
-    assert visited[0] == 'N05' and 'N00' not in visited and visited[-1] == 'N10'
+    with pytest.raises(ValueError, match='resume_from'):
+        _asyncio.run(graph.ainvoke(state))
+    assert visited == []

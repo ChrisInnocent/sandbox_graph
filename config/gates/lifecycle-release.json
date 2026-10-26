@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "profile": "lifecycle-release",
+  "paths": [
+    "tests/orchestration/e2e/test_end_to_end.py"
+  ],
+  "required_ids": [
+    "tests/orchestration/e2e/test_end_to_end.py::test_synthetic_run_then_group_graph_end_to_end",
+    "tests/orchestration/e2e/test_end_to_end.py::test_partial_failure_still_reaches_cleanup_and_delivery",
+    "tests/orchestration/e2e/test_end_to_end.py::test_real_dual_group_end_to_end"
+  ],
+  "requires": [
+    "SANDBOX_GRAPH_TEST_POSTGRES_DSN",
+    "SANDBOX_GRAPH_TEST_PRODUCT_ENV"
+  ]
+}

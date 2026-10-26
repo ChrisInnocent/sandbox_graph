@@ -68,11 +68,11 @@
 
 ### Requirement: CB-07 适配节点自动化边界与状态
 
-系统 SHALL 将适配工作映射到 R1/T0、N00–N10 及对应 B/E 方法，逐节点记录脚本步骤、模型语义分析、必要人工输入和内部图。确定性采集、请求、断言、计算、清理和交付须脚本化，模型不得补造样本或执行未验方案。计划自动化、已有草稿、本地验证和真实环境验证 SHALL 分别记录；本 change 暂停状态不因文档同步而改变。
+系统 SHALL 将适配工作映射到 R1/T0、N00–N10 及对应 B/E 方法，逐节点记录脚本步骤、模型语义分析、必要人工输入和内部图。确定性采集、请求、断言、计算、清理和交付须脚本化，模型不得补造样本或执行未验方案。计划自动化、已有草稿、本地验证和真实环境验证 SHALL 分别记录；用户授权后按父 change 的冻结合同实施；源码证据、本地验证和现场测量 SHALL 分别标记。
 
 #### Scenario: 核对已有测试工具草稿
 - **WHEN** 根目录已有 transport、adapters、measure、density 或 observe 文件
-- **THEN** 系统按 [统一职责表](../../../sandbox-evaluation-workflow/node-automation.md) 和 [内部图](../../../sandbox-evaluation-workflow/node-workflows.md) 检查覆盖及证据，未验收部分标 draft，不把文件存在等同于节点完成
+- **THEN** 系统按 [统一职责表](../../../sandbox-evaluation-workflow/node-automation.md) 和 [内部图](../../../sandbox-evaluation-workflow/node-workflows.md) 检查覆盖及证据，未验收部分记录具体实施或环境验收状态，不把文件存在等同于节点完成
 
 ### Requirement: CB-08 密度吞吐和联合资源观测
 

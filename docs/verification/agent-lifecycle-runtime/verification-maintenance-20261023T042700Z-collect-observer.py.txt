@@ -1,0 +1,10 @@
+import json
+import os
+from pathlib import Path
+
+
+def pytest_collection_finish(session):
+    items = [{'nodeid': item.nodeid,
+        'parameter_id': getattr(getattr(item, 'callspec', None), 'id', None)}
+        for item in session.items]
+    Path(os.environ['LIFECYCLE_COLLECT_ITEMS_PATH']).write_text(json.dumps(items))

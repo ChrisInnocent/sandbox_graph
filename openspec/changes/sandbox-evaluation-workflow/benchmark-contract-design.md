@@ -106,7 +106,9 @@ API fixture 以审计的 schema 和源码分支手工编码，不通过生产 ad
 | BTC-049 | 硬杀在create响应前、已知ID未写receipt、seal前后 | 重启先对账；无重复创建，缺计时标缺测，连续性不伪造 | recovery/test_runner.py |
 | BTC-050 | 控制器退出、sampler退出、spool满、数据库失联 | 有限授权运行；无新无账本提交；丢样明确，恢复序列去重 | recovery/test_runner.py |
 | BTC-051 | cleanup部分失败、迟到child、共享源、另组资源 | 只清拥有对象；残留可交付但不写clean；后续对账仍保护冲突域 | recovery/test_cleanup.py |
-| BTC-052 | 全流程模型Spy抛异常、日志10000行 | 确定性执行无模型调用；节点仅收有界摘要和引用 | scenarios/test_delivery.py |
+| BTC-052 | 全流程模型Spy抛异常、日志10000行 | 确定性执行无模型调用；节点仅收有界摘要和引用；大结果不随每次预算写入重复序列化 | integration/test_large_evidence.py、unit/test_journal.py、integration/test_journal_kill.py |
+
+文件账本的大终态结果使用摘要寻址的独立 JSON：单结果超过 64 KiB 时，先在私有目录 fsync 原始结果再提交账本引用，操作与事件引用同一内容。`state/operation/collect` 校验长度和 SHA-256 后恢复既有公开结构；归档仍保留原文。小结果及历史内联账本保持兼容。结果文件先落地、账本未提交时只留下不具完成效力的孤立证据，原提交意图和预算不能清除或重发。账本提交后重启可恢复完整结果。门禁同时覆盖这两个真实进程退出切点、重复终态冲突、文件损坏与完整 N00—N10/A/F 图输出不携带原文；不提高测量超时以规避失败。
 
 ### BCT-06 扩展、交叉移植和真实验收
 
@@ -242,6 +244,21 @@ B00–B10 的所有子方法以场景文件中的参数化 case_id 展开，不�
 | BCT-15-CALIBER-SPLIT | 净底噪 vs 每沙箱开支 | 字面量：raw=100、deduction=20 | `net_pss_bytes==80` 与 `raw_pss_bytes==100` 分列；缺证明→`net_pss_bytes=None` 而 raw 保留（`test_resources_procfs.py`） |
 
 层级与目录：`tests/benchmark/unit/test_resource_contract.py`（独立 marker；手工时钟与假采样器，不用真实 sleep 猜时序）。受控通过只提升代码契约状态，不声称已在真实环境采集到资源。
+
+### BCT-16 条件参数外部化（完整用例生成）的独立测试合同
+
+对应 BCD-20、RT-50 与 tasks 组 51。oracle 为字面量用例文件与手算期望，不调用被测函数生成预期。
+
+| 编号 | 被测 | 独立 oracle | 关键断言 |
+|---|---|---|---|
+| BCT-16-COMPLETE | 完整生成 | 字面量：缺 `completion` 的文件 | 生成失败并指出缺失字段；不用默认补齐 |
+| BCT-16-PARSE | 规格标签解析 | 字面量：`2v2g`/`2v4`/`8v16G` | 得到 `(vcpus, bytes)`；`2x2g`/`0v2g`/`v2g` 拒绝 |
+| BCT-16-STRICT | 文件加载 | 字面量：含未知键 | 加载失败并指出键，不静默忽略 |
+| BCT-16-GENERATE | 文件→用例 | 字面量：完整低条件文件 | 生成的 `CaseContract` 各字段等于文件声明值，且经严格校验 |
+| BCT-16-MATRIX | axes 展开 | 字面量：2 规格 × 2 并发 × 1 请求 | 4 份用例，顺序/取值符合 |
+| BCT-16-EVIDENCE | 条件入证据 | 字面量：不同规格两轮 | 证据含文件摘要与条件值；两轮按条件分列不合并 |
+
+层级与目录：`tests/benchmark/unit/test_casegen.py`（独立 marker；字面量 oracle，不用真实环境）。受控通过只提升代码契约状态，不声称条件已在真实环境生效。
 
 ## Risks / Trade-offs
 

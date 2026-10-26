@@ -17,6 +17,9 @@ METHODS = {
 }
 
 
+from .creation_hold import HOLD_METHODS, base_method
+METHODS.update({method:METHODS[base_method(method)] for method in HOLD_METHODS})
+
 def capability(product, method):
     if method not in METHODS:
         raise ValueError('unknown method')

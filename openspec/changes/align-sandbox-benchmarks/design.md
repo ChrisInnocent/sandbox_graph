@@ -1,12 +1,12 @@
 # Design
 
-> 本实现草案已暂停，尚未获图设计确认。当前工作以 `../sandbox-evaluation-workflow/design.md` 的 Mermaid 工作流草案为先；以下目录、接口和算法选择须在节点合同确认后重新核对，不能视为已冻结的实施架构。
+> 用户后续已授权实施。本页为跨产品语义与公式映射；执行架构以父 change 的设计、节点合同和测试门禁为准，真实产品证据单列。
 
 逐节点职责和实现状态引用 [node-automation.md](../sandbox-evaluation-workflow/node-automation.md)，内部 Mermaid 引用 [node-workflows.md](../sandbox-evaluation-workflow/node-workflows.md)。本页仅维护适配映射，不复制另一套相冲突的节点图。
 
 ## Context
 
-详见 [proposal.md](proposal.md)。源码证据位于根项目 `docs/source-audit/`。当前本机有 Python，无 Go、Docker、kubectl 和 `/dev/kvm`；真实环境连接信息尚未提供。实现及验证记录须明确本地与远端边界。
+详见 [proposal.md](proposal.md)。源码证据位于根项目 `docs/source-audit/`。环境能力以当次探针为准；真实产品连接合同未提供。实现及验证记录须明确本地与远端边界。
 
 ## Goals / Non-Goals
 
@@ -16,8 +16,8 @@
 
 ## Decisions
 
-- 统一测试层位于根目录 `sandbox_bench/`，使用 Python 标准库，避免依赖三个产品不同 SDK 的计时及重试行为。公开 E2B 控制面和 envd Connect 命令协议通过产品适配器访问；低层 sandboxer 测试与 E2B 端到端测试分层报告。
-- `transport.py` 处理 HTTP、截止时间、Connect 帧；`adapters.py` 管理产品字段、状态与数据面寻址；`measure.py` 管理同步创建、逐批扩容、资源采样与分析；`__main__.py` 负责配置验证、证据输出和清理。源码审计与跨方法矩阵独立保存。
+- 统一测试层位于根目录 `sandbox_bench/`，使用 Python 和锁定依赖，避免依赖三个产品不同 SDK 的计时及重试行为。公开 E2B 控制面和 envd Connect 命令协议通过产品适配器访问；低层 sandboxer 测试与 E2B 端到端测试分层报告。
+- `transport.py` 处理 HTTP、截止时间、Connect 帧；`adapters.py` 管理产品字段、状态与数据面寻址；`completion.py`、`scenario_density.py`、`sampler.py` 和 `analysis.py` 管理对应测量；`session.py` 串联 N00–N10，`runner.py` 提供 CLI。源码审计与跨方法矩阵独立保存。
 - 创建完成判据可以是经核验的状态／内部事件，命令完成为可选独立终点或停表后验证。API 响应头、完整返回、状态观察、内部 duration 和命令完成分别计时；日志到达不等于事件发生，不混时钟域。只重试合适的只读观察，未知副作用先对账，不盲目重发创建。所有失败保留。
 - 密度保留两条协议：`cube_growth` 按列表存量净增长复现停止规则，同时重验拥有实例的命令就绪数；`resource_projection` 在固定数量实例下计算原 Kuasar 兼容值和统一估算。原脚本全局删除、固定 sleep 视为 ready、将 requested 当 ready、四舍五入参与容量计算等行为不进入统一结论。
 - 共同公式：基线 A0、窗口最小可用内存 Amin、有效实例 N、预留 R；cost=(A0−Amin)/N；总量估算 floor((A0−R)/cost)，剩余估算 max(0,total−N)。原 Kuasar 兼容值保留其 d 四舍五入到一位和 floor(Amin/d)，注明 requested 分母及剩余量标签。两个视图都不宣称为实测最大容量。
@@ -34,10 +34,10 @@
 | R1/T0 | 版本／引用校验、方法结构、适配绑定 | 新源码语义需模型；已有审计不是适配验证 |
 | N00/N01/N02/N03 | 合同、操作对账、来源和环境前置、协议／功能验证 | 模型诊断缺口；未定条件由人工明确 |
 | N04/N05/N06 | 角色 PSS/CPU、状态／日志／命令事件、发压、每秒吞吐和后验 | 新归属语义需模型；不能模型逐请求执行 |
-| N07/N08/N09/N10 | 证据封存、确定性计算、所有权清理、交付状态 | 未知异常解释；本目录代码仅 draft |
-| T6/T8/A1–A7/F1–F4 | 复核、分析、Excel、事实与引用校验、归档 | 模型解释和选型建议；执行器均未验收 |
+| N07/N08/N09/N10 | 证据封存、确定性计算、所有权清理、交付状态 | 未知异常解释；实现位于共享 sandbox_bench；现场验证单列 |
+| T6/T8/A1–A7/F1–F4 | 复核、分析、Excel、事实与引用校验、归档 | 模型解释和选型建议；本地合同验证与现场验收分开 |
 
-内部图继承公共 GATE：输入不足和未知副作用不能向前执行；新模型方案缺可执行适配则待适配；等待前处理活动资源；零实例基线先于待测 cohort；选择命令完成时先执行命令再停表。具体实现语言、工具文件和配置编码仍需依节点合同复核，不能以旧草稿反向冻结设计。
+内部图继承公共 GATE：输入不足和未知副作用不能向前执行；新模型方案缺可执行适配则待适配；等待前处理活动资源；零实例基线先于待测 cohort；选择命令完成时先执行命令再停表。实现与验证以父 change 的任务和证据为准；新增语义仍需更新节点合同。
 
 ## Risks / Trade-offs
 

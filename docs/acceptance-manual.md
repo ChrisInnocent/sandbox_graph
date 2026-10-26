@@ -1,6 +1,6 @@
 # 真实环境验收操作手册
 
-本手册用于**真实环境**下完成剩余 19 项 blocked 任务的验收。原则：**凡不能证明的一律保持未勾/blocked，绝不补零、绝不挑样本、绝不从合成 fixture 推默认值**。离线部分已全部完成（进度见 `openspec`）；本手册只覆盖需要真实 PostgreSQL / 三产品 / 特权机的部分。
+本手册用于真实环境验收。代码实施进度以 OpenSpec tasks 和 [实施记录](verification/agent-lifecycle-runtime/implementation-increment-20261024.md) 为准，不能把未完成代码算成环境阻塞。原则：**凡不能证明的一律保持未勾/blocked，绝不补零、绝不挑样本、绝不从合成 fixture 推默认值**。本手册覆盖需要真实 PostgreSQL、三产品和特权机的部分；尚未接通的 harness/验证器需要先完成代码。
 
 > 通用：使用 `.venv/bin/python`；凭据只经环境变量，**不写入命令参数、产物或提交记录**；每步保存原始证据并在报告标注 `environment_verified`。
 
@@ -11,7 +11,7 @@
 ```bash
 cd /storage/Users/currentUser/IDEProjects/sandbox_graph
 .venv/bin/python -V                 # 期望 3.14.x
-.venv/bin/python -m pytest -q       # 基线：应 849 passed, 4 skipped
+.venv/bin/python -m pytest -q       # 以本次实际 pass/fail/skip 和 JUnit 为准
 mkdir -p evidence/real/<group>/<timestamp>
 ```
 

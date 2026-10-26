@@ -165,6 +165,7 @@ class RepairPlanner:
                     "node": observation.node_id, "action": action.action_ref})[:32]
                 input_data = {"observation_id": observation.check_id,
                     "rule_ref": observation.rule_ref, "repair_code": observation.repair_code,
+                    "boot_id": observation.boot_id,
                     "observed": observation.observed, "expected": observation.expected}
                 dependencies = tuple(sorted(step for code in action.dependencies
                     for step in step_ids_by_code.get(code, ())))

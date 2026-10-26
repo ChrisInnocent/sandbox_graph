@@ -10,6 +10,7 @@
 | --- | --- |
 | 第一次使用、让智能体执行测试 | 本文的“首次使用”和“交给智能体的提示词” |
 | 配置真实环境、来源、规格和采集器 | [执行配置说明](docs/benchmark-wiring.md)、[环境适配实现进度](docs/environment-adapters.md) |
+| 目标尚未安装远端 helper、需要离线投递资产 | [首次部署与恢复](docs/environment-bootstrap.md) |
 | 运行多环境组、配置数据库和恢复任务 | [编排部署与恢复](docs/orchestration/setup.md) |
 | 确认测试交付件（数据/日志/报告/Excel）落在哪 | [交付件落盘位置](docs/orchestration/setup.md#交付件数据日志报告落在哪里) |
 | 增删改测试、节点、环境或计算方法 | [维护指南](docs/maintenance.md) |
@@ -17,20 +18,38 @@
 | 判断当前哪些已实现、哪些尚未验收 | [交付记录与缺口](docs/verification/README.md)、[任务清单](openspec/changes/sandbox-evaluation-workflow/tasks.md) |
 | 选择本轮执行范围 / 修改图 | [使用与维护指南 · 选择范围 ≠ 修改图](docs/maintenance.md) |
 | 在真实 PostgreSQL / 三产品 / 特权机验收 | [真实环境验收操作手册](docs/acceptance-manual.md) |
+| 启用节点修复、模型团队、候选迭代与回退 | [生命周期操作入口](docs/orchestration/lifecycle-operations.md)、[能力和验证边界](docs/orchestration/lifecycle-status.md) |
 | 查可选指标与可调背景条件、逐场景规格 | [逐场景详细规格](openspec/changes/sandbox-evaluation-workflow/scenario-spec.md)（指标目录 RT-44/BCD-15、条件矩阵 RT-45/BCD-16） |
 | 审阅编排图引擎差距与覆盖 | [差距清单](docs/orchestration/gap-analysis.md)、[ORC 覆盖账本](docs/orchestration/orc-coverage.md)、[来源语义审计](docs/source-audit/alignment.md) |
 
 ## 当前可用范围
 
 - **单用例执行**：`sandbox_bench.runner case` 接入真实环境配置，执行、校验和封存证据；`verify`、`recompute` 用于离线复核。需要部署证据、来源和对应能力，方法出现在目录中不等于该部署已验证支持。
+- **本地恢复备份**：复制完整用例目录，尤其是 `ledger/`；大终态结果位于 `ledger/results/`，仅复制 `journal.json` 无法恢复完整证据。最终归档仍包含原始日志，可独立校验和复算。
 - **CLI 子命令**：`run`／`cleanup`（配置驱动发压／清理）、`case`（单用例 N00–N10）、`verify`／`recompute`（离线复核）、`resolve`／`build`（来源只读解析／B00 构建）、`endpoint`（创建端点拓扑解析）、`topology`（拓扑→声明组件清单）、`restore`（测试间环境还原）、`scenario`（指标/条件选择与背景条件校验）。退出码：`0` 成功；`2` blocked／incomplete／unverified；`1` 异常。
 - **执行范围选择 vs 图变更**：可按环境组／沙箱类型／场景／方法／优先级／拓扑／来源 kind 选择本轮范围，并支持排除与仅 `check`／`analysis`／`report` 阶段（`python -m sandbox_graph catalog`、`preview selection.json`，**只读**）；新增测试能力、改变节点依赖或增删图节点属于**图版本变更**（新版本＋新 run，不热切换），**不是选择**。按单个 N00–N10 子节点选也不支持。详见 [orchestration-design.md](openspec/changes/sandbox-evaluation-workflow/orchestration-design.md) D08/D14。
 - **完整编排组件**：已有五类 LangGraph、选择器、持久状态与 Worker 接口。正式运行需要 PostgreSQL 和实际环境服务装配，当前没有一条 `sandbox_graph start` 命令可自动部署并运行全部环境。
 - **验证边界**：已有本地协议、计算和恢复测试；尚无三产品真实性能结果。具体安装配置脚本、部分方法和故障验收仍未交付，详见上述缺口文档。
 
+### 节点生命周期增量（实施中）
+
+可用操作入口为 `python -m sandbox_graph lifecycle --help` 和 `python -m sandbox_graph lifecycle gates --help`。`lifecycle rollout --input <request.json>` 按 run/scope/node 调整 off/actions/scoped/candidate；`lifecycle rollback --input <request.json>` 按已冻结的回退版本建立新 run/thread。两者均要求已有精确授权、原请求幂等与持久数据库；请求格式见生命周期操作文档。关闭新增修复仍保留原操作清理，不重置预算。
+
+环境准备新增 `scripts/environment/prepare_auth.py`、`prepare_kuasar_groups.py`，生成私有制品、摘要锁定的服务端配置步骤和匹配的客户端凭据引用。它们通过现有 recipe/grant 路径执行；生成文件不等于安装或鉴权验收通过。
+
+[当前能力与剩余工作对照](docs/orchestration/lifecycle-status.md)区分可调用服务、子交付、完整任务验收和真实后端验证。
+
+项目根目录已合入生命周期增量，包含严格状态/事件合同、45 节点修复策略目录、持久请求/预算/处置服务、现代修复执行器和 HTTP provider 协议。原图、历史修复和清理/对账路径使用共享 work 互斥；恢复通过可信 RecoveryPlan 重验依赖，拒绝任意 `resume_from`。这些是逐项实现，已接工作/环境/组/运行作用域的生命周期监督、候选修订与独立复核服务；普通 worker 可通过独立生命周期配置启用监督和 investigator。候选生产门禁、发布后验等剩余接线见能力账本。
+
+服务接口及边界见 [持久记录与派发](docs/orchestration/lifecycle-persistence.md)、[生命周期调度与配置](docs/orchestration/lifecycle-supervision.md)、[动作执行](docs/orchestration/repair-execution.md)、[恢复计划](docs/orchestration/recovery-plans.md)、[最小上下文与证据](docs/orchestration/lifecycle-context.md)、[provider 协议](docs/orchestration/agent-provider.md)、[受限团队与诊断装配](docs/orchestration/agent-team.md)。代码与验证状态以 [tasks 42–49](openspec/changes/sandbox-evaluation-workflow/tasks.md) 和 [本次实施记录](docs/verification/agent-lifecycle-runtime/implementation-increment-20261024.md) 为准。没有直接调用宿主 dispatch agent 的验收证据。
+
+T6 精确返工已有本地验证；停止后角色入队、drain 提前取消和父级漏计子 provider 已修复，见 [验证记录](docs/verification/agent-lifecycle-runtime/stop-fixes-20261024.md)。这些属于45.4的子交付，完整跨作用域停止/收口和真实后端验收仍未完成。
+
+旧 `NodeRemediationService.order()` 不再凭模型提案创建任务，返回 `lifecycle_contract_required`；新请求使用带 request_id、版本、实际 owner、授权和处置证明的 `request_remediation`。历史记录保留。现有命令包括 `python -m sandbox_graph lifecycle status/request-repair/request-change/decision/cancel` 和 `lifecycle gates run/show`；用 `--help` 查看合同。写命令必须具有账本中的精确作用域授权，不从聊天权限推导运行权限。
+
 ### 环境检查与配置实现进度
 
-环境适配 OpenSpec change 已完成一部分通用底层：声明/报告/动作契约、SSH transport、访问与主机探测、密钥和鉴权处理、配置文件原子事务、修复计划、受限动作执行接口、远端操作 journal，以及 Linux 进程 inventory。对应任务进度、验证边界和未实现清单见 [环境适配实现进度](docs/environment-adapters.md) 与 [OpenSpec tasks](openspec/changes/implement-sandbox-environment-adapters/tasks.md)（当前 **22/65**）。
+环境适配 OpenSpec change 已完成一部分通用底层：声明/报告/动作契约、SSH transport、访问与主机探测、密钥和鉴权处理、配置文件原子事务、修复计划、受限动作执行接口、远端操作 journal，以及 Linux 进程 inventory。对应任务进度、验证边界和未实现清单见 [环境适配实现进度](docs/environment-adapters.md) 与 [OpenSpec tasks](openspec/changes/implement-sandbox-environment-adapters/tasks.md)（逐项状态随本地门禁更新）。
 
 **这两类节点各自做什么**（职责与判据详见 [环境适配实现进度 · 现状](docs/environment-adapters.md)）：
 
@@ -44,7 +63,20 @@
 
 **红线**：测量运行中 **E1/E2 必经**；**C1–C3 仅在 drift 时触发**；`check-only` 不允许配置。
 
-**这不是可直接执行的三产品环境准备能力。** CubeSandbox、Kuasar、AgentENV 的产品级环境检查、配置/安装/修复适配，以及环境图/CLI 接线尚未完成；当前没有能够自动完成三种沙箱环境检查和配置的端到端入口。不要据此对真实节点执行安装或宣称环境 ready。
+环境图 `environment:1` 与 `env check/plan/apply/worker/status/reconcile/report` 已接真实 SSH、原操作账本、逐步骤 grant、有限复检、canary 与报告。安装 recipe 需要版本锁定的配置、二进制和依赖资产。通用入口存在不等于所有产品部署拓扑已覆盖：完整产品修复、纯管理角色和发布链的剩余工作仍记录在任务表；三产品真实安装验收尚未运行。
+
+### 启用已实现的生命周期入口
+
+```bash
+python -m sandbox_graph lifecycle --help
+python -m sandbox_graph lifecycle gates run --profile development --output artifacts/gates/development-current
+python -m sandbox_graph eval worker --runtime evaluation-runtime.json --lifecycle-runtime lifecycle-runtime.json --once
+python -m sandbox_graph env worker --runtime environment-runtime.json --lifecycle-runtime lifecycle-runtime.json --once
+```
+
+worker 仍需 `SANDBOX_GRAPH_POSTGRES_DSN`；测试门禁使用独立的 `SANDBOX_GRAPH_TEST_POSTGRES_DSN`。`lifecycle-runtime.json` 的基础合同为 `{"schema_version":1,"bindings":[]}`，空 bindings 不看护任何运行。真实 binding 需要运行/节点/策略/授权和有限预算，见 [装配与操作说明](docs/orchestration/lifecycle-operations.md)。配置模型时必须提供应用内 HTTP bridge，不会自动调用编辑器主 agent 的私有 dispatch。
+
+准备调参配置资产：`python scripts/environment/tune_config.py --input tuning.json --manifest tuning-manifest.json`。该命令只输出私有配置资产和原文件 CAS 摘要；真正修改仍由批准的 recipe、grant 和独立复检执行。
 
 ## 工作流程
 
@@ -232,3 +264,12 @@ python3 -m venv .venv
 - [三产品来源语义与创建端点审计](docs/source-audit/alignment.md)
 
 当前代码包含本地受控协议、公式和恢复测试。真实三产品性能、Linux 采集权限与 PostgreSQL 多进程故障验收需要对应环境；测试通过不等于候选产品性能已验证。缺口保留在任务清单中，change 不自动归档。
+
+
+完整用例和矩阵入口已实现：用 `config/case-low.yaml` 或 `config/case-matrix.yaml` 固定规格、并发、请求量、完成终点及预算，再执行 `python scripts/local_mock_run.py --case config/case-low.yaml --out artifacts/mock-case-low`。这是合成产品后端上的真实图执行；真实后端配置通过 `python -m sandbox_bench.runner case --case <完整用例> --config <后端配置> --output <新目录>` 提供。详见 [条件文件](docs/conditions-profile.md)。
+
+停止流程固定门禁：`python scripts/check_lifecycle_stop.py --profile stop-local` 核对登记用例、逐阶段结果和输入摘要；`--profile stop-persistent` 要求专用 `SANDBOX_GRAPH_TEST_POSTGRES_DSN`，缺失退出码为 2 / blocked。它们不签发候选自动晋级证明。
+
+环境独立检查与准备现在可使用 `.venv/bin/python -m sandbox_graph env --help`，具体输入、逐步骤 SSH 许可、PostgreSQL worker 与中断恢复见 [环境图命令](docs/environment-workflow-cli.md)。环境安装完成和测试准入分别验收；产品验证器的剩余接线仍在 tasks 中保留，缺证明的报告不会标 ready。
+
+动态采集、镜像加载、受管容器恢复、ublk 和原操作私有日志的新接口见 [运行证据与恢复说明](docs/environment-runtime-evidence.md)。本轮持续实施状态见 [补齐记录](docs/verification/agent-lifecycle-runtime/remaining-20261024.md)。

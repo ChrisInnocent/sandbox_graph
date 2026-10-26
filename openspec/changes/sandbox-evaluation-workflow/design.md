@@ -1,10 +1,16 @@
 # Design
 
+## 当前工作区
+
+2026-10-24：生命周期代码、规格、设计、任务和验证资产已合入本项目根目录。以根目录工作区为审阅对象；原工作树仅保留历史资产，不能再以“主目录未合入”解释当前状态。未自动提交或推送。当前边界见 [能力账本](../../../docs/orchestration/lifecycle-status.md) 与 [继续实施记录](../../../docs/verification/agent-lifecycle-runtime/continuation-20261024.md)。
+
 ## Context
 
-这是待审阅的 **Mermaid 工作流设计草案**，用于后续逐节点实现 LangGraph 调度；不是演示架构图，也不是已实现图的运行轨迹。当前没有端到端 LangGraph 实现。
+2026-10-24：五阶段图、实际脚本适配及生命周期服务已在根目录接线；候选编辑、独立复核、可信门禁、bundle 晋级与新 run 回退已有代码和本地测试。完整任务状态见 [tasks](tasks.md)，未完成代码与环境验证分别见 [能力账本](../../../docs/orchestration/lifecycle-status.md)。不再使用此前工作树的局部计数作为当前状态。
 
-用户已明确顺序：源码审计 → 测试方法与节点合同 → Mermaid 主图及子图 → 确认拓扑 → LangGraph 调度实现 → 接入确定性脚本 → 真实测试。此前提前创建的 `sandbox_bench/`、`tests/` 和 `align-sandbox-benchmarks` 实现草案暂停，不能反过来决定本图的节点边界。
+本文的 Mermaid 定义目标拓扑、条件边与恢复协议。已有实现位于 `sandbox_graph/graphs/factory.py`、`executor.py` 及运行时服务，包含主图、组图、工作图、分析图和报告图。设计图不作为完整能力或真实部署验收证据；代码与需求之间的差额按 tasks 和实施记录核对。
+
+用户已明确顺序：源码审计 → 测试方法与节点合同 → Mermaid 主图及子图 → 确认拓扑 → LangGraph 调度实现 → 接入确定性脚本 → 真实测试。早期脚本草案曾在拓扑确认前暂停；后续用户已授权 apply，目前按合同实现和验证。已有脚本必须服从节点边界与测量口径。
 
 需求依据：[proposal](proposal.md)、[工作流 spec](specs/evaluation-workflow/spec.md)、[环境 spec](specs/environment-readiness/spec.md)、[运行时 spec](specs/runtime-evaluation/spec.md)。
 源码依据：[跨候选方法矩阵](../../../docs/source-audit/alignment.md)、[CubeSandbox](../../../docs/source-audit/cubesandbox.md)、[Kuasar](../../../docs/source-audit/kuasar.md)、[AgentENV](../../../docs/source-audit/agentenv.md)。
@@ -19,7 +25,7 @@
 
 **Goals:** 明确五阶段如何由主 agent、环境组统筹 agent、工作节点 agent 协作；将源码差异落实为测试分支；定义数据、状态、条件边、汇聚和恢复边，作为调度代码的依据。
 
-**Non-Goals:** 本轮不编写 LangGraph 或测试执行代码，不以已有脚本草稿推定任何节点实现完成。详细设计提出数据库、任务后端和部署方案供评审，尚不代表这些技术选择已经获得用户确认或完成验证。
+**Non-Goals:** 本设计不将源码存在或规划产物齐备视为完整验收，不预设真实环境和实验参数。LangGraph、PostgreSQL 与持久任务/outbox 为现有实现采用的基线；真实数据库、产品环境和新增生命周期服务分别验收。
 
 ## Decisions
 
@@ -309,7 +315,7 @@ LangGraph 提供持久化图状态的机制；外部测试任务身份、幂等�
 4. 按已确认合同接入确定性脚本；检查既有草稿是否符合合同，不预先认定可复用。
 5. 接入用户环境，做功能验证与同方法实测，再形成横向对比。
 
-当前仅有源码审计、需求 spec、此设计草案和提前产生的部分脚本草稿。脚本实现已停止；没有真实沙箱测试，没有可运行的端到端 LangGraph 图，也没有生成 Archify 图。
+历史说明（2026-10-22）：上述列表是初始实施顺序，不是当前停在设计阶段的指令。2026-10-23 已进入 apply，当前完成范围见 [proposal 状态表](proposal.md#当前实施范围2026-10-23)、tasks 及实施记录；真实环境验收不得由设计存在推定。
 
 ### 9. 工作节点内脚本与模型边界
 
@@ -323,7 +329,7 @@ LangGraph 提供持久化图状态的机制；外部测试任务身份、幂等�
 | A1/A2/A3/A4/A5/A7 | 固定输入、质量、归一化、统计、比较、规则复核和 Excel | 模型解释新语义／异常；人工明确必要业务偏好 | 第 6 节 |
 | F1/F2/F4 | 事实装配、图表、数值／引用／版本检查、归档与恢复入口 | 模型撰写解释和语义复核；人工只解决未明确取舍 | 第 7 节 |
 
-每行的具体节点各有职责表行和内部子图，不把一个宏观阶段笼统标成“自动化”。S/M/H 与 planned/draft/verified 是两组独立字段；本轮所有统一节点仍 planned，已有根目录代码只作为未验收 draft。
+每行的具体节点各有职责表行和内部子图，不把一个宏观阶段笼统标成“自动化”。S/M/H 与 planned/draft/verified 是两组独立字段；具体节点实现/验证状态以 tasks 和实施记录为准；新增生命周期的已完成项按 tasks 勾选，服务/运行时子交付和未完成的候选执行/发布见 [当前能力对照](../../../docs/orchestration/lifecycle-status.md)；不把局部接线视作全节点能力。
 
 所有内部子图继承 GATE 的输入验证、外部对账、有限重试、资源处置和证据交付。路由菱形由脚本判断，不引入额外模型节点。持久等待前停止新发压、处理采样及预定撤压／恢复；保留资源有期限和预算，未知副作用隔离冲突域。新方法或脚本变更按版本评估失效范围，不能靠更新说明就继续复用旧测量。
 
@@ -340,8 +346,9 @@ LangGraph 提供持久化图状态的机制；外部测试任务身份、幂等�
 | 分层验收、增量分析和最终版本闭合 | D13 | T07/T09 |
 | 图修改、影响与证据复用 | D14；Q3 已确认 | ORC-054–056 |
 | 工程用例与沙箱性能用例的边界 | D16 | T02/T08/T12 |
+| 节点自修复、隔离编码、团队与版本晋级 | D21；[ALD 详细设计](agent-lifecycle-design.md)，其中 ALD-11 固定取消/drain/supersede 的逐文件接口、归属、六个事务边界与内部拓扑 | T16；[ATG 测试门禁](agent-lifecycle-test-gates.md)，其中 ATG-08/09 定义 ST-01–20、夹具及门禁 runner 接口；tasks 42–49 |
 
-本次测试设计列出 ORC-001–070，均为待实现测试合同，不是测试通过记录。真实 LangGraph／持久数据库、双执行者和硬崩溃测试与纯逻辑夹具分层；设计文档校验不能代替这些验收。
+工程测试设计覆盖 ORC-001–088；新增 ORC-077–088/ALU/ALI 是完整目标合同，其中模型/状态机、上下文/provider、预算/修复和恢复等已有代码及限定范围验证，组合与真实后端验收尚未全部完成，逐项按 tasks 与证据记录。目录编号不是测试通过记录。真实 LangGraph／持久数据库、双执行者和硬崩溃测试与纯逻辑夹具分层；设计文档校验不能代替这些验收。
 
 ## Risks / Trade-offs
 
@@ -349,8 +356,16 @@ LangGraph 提供持久化图状态的机制；外部测试任务身份、幂等�
 - 增量分析与并行调度容易混用交付版本 → 主图以明确事件和输入快照驱动，最终报告检查版本闭合。
 - 以每个采样点启动模型会浪费 token → 模型绑定持久工作节点，采样和请求循环由脚本完成。
 - 图重放可能重复外部操作 → 持久操作身份、外部查询、去重和尝试历史单独设计。
-- 设计未确认便实现会固化错误边界 → 本轮只审图和节点合同，实施任务保持未开始或暂停。
+- 设计与实现状态脱节会误导后续执行 → 每次实现同步需求映射、设计差额、任务勾选和验证证据；按本地/后端/真实适配分别标记状态。
 
 ### 代码设计扩展：测试执行与契约
 
 [benchmark-design.md](benchmark-design.md) 将 B/E 方法落实到sandbox_bench模块、持久会话、三产品适配、发压／PSS／CPU／统计算法；[benchmark-contract-design.md](benchmark-contract-design.md) 定义60项BTC合同、独立oracle和实际测试代码目录。它们与ORC测试互补，任务见 [tasks.md](tasks.md) 15–26组。Kuasar镜像builder新证据见BCD-05，取代早期“完整准备入口未确认”的源码缺口描述；部署可用性仍需验证。
+
+## D19. 冻结 bundle 启动与故障门禁补齐
+
+`eval bundle-worker` 从持久注册表读取 bundle，核验 manifest/tree/runtime/lifecycle 配置摘要后以新 `-I -B` 解释器 exec 原 PID；先验后导入，避免原主树模块污染候选 worker。运行权限、依赖版本和 job 的 bundle/version 匹配仍由现有部署服务检查。原 worker 保留 drain，不覆盖旧 checkpoint。
+
+可信门禁的隔离执行结果必须服从独立 reconcile；不能确认 cleanup 时输出 unknown 并保留隔离身份，即便 execute 自称 complete。ATG-06 固定变异工具只在临时副本修改生产函数，保持 baseline 测试摘要；只把正常 setup/teardown 下的 call 断言失败算捕获，不能将收集错误、skip 或 crash 当成功反例。它只提供 local_only 证据。
+
+真实 PG 故障矩阵使用 spawn、pipe 切点和 SIGKILL，覆盖 repair order/job/outbox、effect/receipt/outcome/结算、promotion/rollback 的 commit 前后。事务 instrumentation 不替换实际 PostgreSQL 时钟和 fences；独立持久文件账本检测重复动作，恢复等待真实 lease 过期。缺专用 DSN 时保留 skipped，不能据本地 seed 测试提升为 backend_verified。

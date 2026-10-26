@@ -1,6 +1,6 @@
 # 图编排与沙箱测试代码实施任务
 
-2026-10-22 新增节点生命周期与候选演进任务 **42–49**，依据 [详细设计 ALD](agent-lifecycle-design.md) 和 [测试门禁 ATG](agent-lifecycle-test-gates.md)。这些任务全部 planned；本次只补设计，不以文档校验代替代码实施。既有 1–41 组进度保留。新增依赖：42→43→44→45；42→46→47；44/45/47→48→49。每组同时提交实现、对应测试及合同/操作文档，不把测试和文档延后到最后一组。
+2026-10-22 新增节点生命周期与候选演进任务 **42–49**，依据 [详细设计 ALD](agent-lifecycle-design.md) 和 [测试门禁 ATG](agent-lifecycle-test-gates.md)。新增时这些任务为 planned；2026-10-23 已按用户授权进入 apply，当前为 in_progress。完成项以本清单勾选为准；未勾选项可能已有子交付，不能以文档校验或局部实现代替整项验收。既有 1–41 组进度保留。新增依赖：42→43→44→45；42→46→47；44/45/47→48→49。每组同时提交实现、对应测试及合同/操作文档，不把测试和文档延后到最后一组。
 
 本清单由 OpenSpec propose 在 2026-10-21 生成，现按用户授权进入 apply；勾选表示整条验收已有证据，未勾选可能已有部分代码，具体缺口见 [实施记录](../../../docs/orchestration/progress.md)。设计依据：[主设计](design.md)、[编排代码设计](orchestration-design.md)、[编排测试设计](orchestration-test-design.md) 及三份 delta spec。Q3 已确认：旧任务原图收尾，新图创建关联的新运行，复用经验收证据，不热切换活动拓扑。
 
@@ -106,7 +106,7 @@
 本组只验证前述已实现组件的组合行为；各模块单元／合同测试已放在对应实施组。
 
 - [ ] 14.1 用真实 LangGraph、正式 PostgreSQL 后端及持久 ControlledRunner，构建双 worker 硬杀、连接中断、重复／乱序事件、artifact 提交失败及图版本切换组合故障测试。验收：`test_recovery_integration.py` 联合验证 ORC-029–045、056，独立副作用账本与最终所有权一致，未知资源无越权释放。
-- [ ] 14.2 实现五阶段双环境组端到端、部分失败、人工等待、增量分析、only-analysis/report 场景。验收：`test_end_to_end.py` 覆盖 ORC-065–068，所有已选项都有显式处置、Excel／报告接口的产物同版本可追溯，真实产品测试状态仍单列。
+- [x] 14.2 实现五阶段双环境组端到端、部分失败、人工等待、增量分析、only-analysis/report 场景。验收：`test_end_to_end.py` 覆盖 ORC-065–068，所有已选项都有显式处置、Excel／报告接口的产物同版本可追溯，真实产品测试状态仍单列。
 - [x] 14.3 执行 T11 的有限种子属性与关键变异验收，并汇总全部 ORC-001–070（含 ORC-056a–h）映射与结果。验收：accepted 当完成、删除 fencing、缺测补零、跳过清理、latest 混读、超时批准等变异均被相关断言捕获；45 节点覆盖与受限上下文检查通过，seed 和失败记录可复现。
 - [x] 14.4 执行限定范围测试集、OpenSpec 严格校验及文档／图／任务一致性检查，整理实施版本、运行命令、结果、未测／阻塞清单和后续业务脚本缺口。验收：可复查每项完成证据；既有草稿测试问题单列，未跑全库不声称全库通过，未通过 L5 不声称任何产品性能已验证。
 
@@ -244,6 +244,8 @@
 - [x] 31.3 `BpfSchedSwitchCollector`（只读、`sched_switch` tracepoint）：`availability()` 检测 root／clang／bcc／tracefs；不可用→`unavailable` **不伪造峰值**；`start` 在不可用时抛错。验收：无特权/无 bcc 环境下返回明确 reason；不 attach 也能跑完单测。
 - [ ] 31.4 接入与真实验证：将采集器接入 N04–N07（与 `ResourceSampler` 并行），在 `analysis` 下输出 `cpu.true_peak_cores`／`by_role`／`by_component` 与 `sampled_peak_cores` **分列**，并用 pre-roll/post-roll 保证窗口内 on/off 完整。验收：在**特权＋真内核**环境 attach `sched_switch` 并与 sampled 对比；缺 eBPF/特权时回退 sampled 并标 unavailable；不得把 trace 时钟与 Python monotonic 混算。
 
+2026-10-24：31.4 本地接线已实现，`wiring.sched_switch=true` 启用本机采集，N04 attach/pre-roll，N05/N06 单独记录 trace 时钟窗口，N07 post-roll/join/detach，N10 封存原始事件。输出 `resources.sched_cpu` 和 `sched_cpu_steady`，与 sampled 分列。丢事件、PID 复用、线程清单变化或未知退出不产生有效真峰值；缺 backend 显式 unavailable。真实特权内核验收保持未完成。
+
 ## 32. 归属完整性：无主数据不得进入分量运算
 
 保证采集数据能**脚本批量分析**、**一一对应到组件进程**、**分量运算只用有主数据**。身份是完整进程元组（`environment,node,boot_id,pid,start_ticks`），pid 单独不够（复用会串主）。脚本侧 `analyze_case`／`recompute_case` 与在线路径共用同一归属报告，可从冻结证据逐案重算。
@@ -331,10 +333,10 @@
 
 ## 42. 生命周期模型、策略目录与状态合同
 
-- [ ] 42.1 新增 domain/agent_lifecycle.py 严格模型、事件状态表与版本化 RepairPolicy，区分生命周期 phase 与 execution/data/performance/cleanup；同步 docs/orchestration/contracts.md。验收：ALU-01、04、20 覆盖全部事件边/非法跳转、最后一次成功、超期/无进展/safety_budget 处置和等待不算闭合。
-- [ ] 42.2 新增 catalog/repair_actions.py，登记 N01/N07/N09 原有动作的 handler、schema、效果类别、权限、postcheck/reconcile/cleanup；建立 45 节点 policy 条目，未实现动作标 unavailable。验收：ALU-01/03、ORC-077/078，不能仅按 action 名执行未登记代码。
-- [ ] 42.3 新增 domain/evolution.py 的候选、门禁、审查与晋级合同；输入摘要与 provenance 分离，拒绝未知字段；同步合同文档。验收：ALU-14/16/18 的候选身份与摘要变更反例。
-- [ ] 42.4 在 tests/orchestration/conftest.py 建独立失败事件、假模型、效果账本和预算夹具，测试预期用字面值和手工依赖图；新增 schema 兼容测试。验收：旧记录可只读，新增字段不重解释历史；G1 收集清单非空且包含全部参数变体。
+- [x] 42.1 新增 domain/agent_lifecycle.py 严格模型、事件状态表与版本化 RepairPolicy，区分生命周期 phase 与 execution/data/performance/cleanup；同步 docs/orchestration/contracts.md。验收：ALU-01、04、20 覆盖全部事件边/非法跳转、最后一次成功、超期/无进展/safety_budget 处置和等待不算闭合。
+- [x] 42.2 新增 catalog/repair_actions.py，登记 N01/N07/N09 原有动作的 handler、schema、效果类别、权限、postcheck/reconcile/cleanup；建立 45 节点 policy 条目，未实现动作标 unavailable。验收：ALU-01/03、ORC-077/078，不能仅按 action 名执行未登记代码。
+- [x] 42.3 新增 domain/evolution.py 的候选、门禁、审查与晋级合同；输入摘要与 provenance 分离，拒绝未知字段；同步合同文档。验收：ALU-14/16/18 的候选身份与摘要变更反例。
+- [x] 42.4 在 tests/orchestration/conftest.py 建独立失败事件、假模型、效果账本和预算夹具，测试预期用字面值和手工依赖图；新增 schema 兼容测试。验收：旧记录可只读，新增字段不重解释历史；G1 收集清单非空且包含全部参数变体。
 
 ## 43. 持久事务、预算与修复派发
 
@@ -344,53 +346,68 @@
 - [ ] 43.4 实现 ResourceDispositionReceipt 的生产/时效复核和共享 work lease，禁止 resources_disposed 布尔值绕过；未知效果保持原 operation 对账。验收：ALU-08/09、ALI-04，旧 owner 拒绝写入；无现场许可仍可做受限离线诊断。
 - [ ] 43.5 实现 outcome/postcheck/预算结算/后继 outbox 原子提交及 backoff/watchdog；明确效果失败、未知、无进展和耗尽分流。验收：ALU-06、ALI-04，修复 A 失败可换 B，未知操作不重发，硬杀接管不重复计次；同步故障手册。
 
+- [x] 43.6 修复 RemedyJobHandler 真实线程租约生命周期：获取、续租、失效取消、完成事务 fence、finally 释放；任务 claim 与 thread epoch 独立，MemoryRepository 使用独立 UUID lease_id。验收：ALU-21 无手工预租约、竞争、过期、接管、续租失败和取消反例，旧回归通过；同步 ALD-10 与实施记录。
+
 ## 44. 节点监督、provider 和受限 agent team
 
-- [ ] 44.1 扩展 runtime/agents.py、node_agent.py，生成 node_supervisor_id 和最小 ContextPacket，按证据 capability 读取并限字节/脱敏；保留现有 owner 身份兼容。验收：ALU-02/03，跨组、私有父会话、路径穿越及秘密内容均拒绝；正常成功调用模型为零。
-- [ ] 44.2 新增 runtime/agent_bridge.py 及应用内 provider 接口，实现 capability 检查、幂等 submit、按 request_id lookup、status/cancel/collect；记录模型版本与 usage 上界。验收：ALU-12，丢响应不换 ID 重发，取消须终结回执，缺能力只阻塞依赖该能力的路径。
-- [ ] 44.3 实现本项目 HTTP/RPC bridge 协议与配置/认证/scope 文档、受控协议服务测试；不猜测宿主私有 API。验收：ALU-12 的协议错误、认证失效、超时、重复回执反例；应用内 provider 可独立验收，真实宿主留给 49.4。
-- [ ] 44.4 实现 supervisor/investigator/coder/reviewer 角色任务、共享预算和默认一层团队限额；接入统一 TaskBackend/Worker 而非内存 spawn。验收：ALU-13、ORC-088，任务/并发/深度超限原子拒绝，reviewer 与 coder 上下文隔离。
-- [ ] 44.5 接通已知规则直达修复和未知问题诊断，提案仅选已注册动作或候选路线；更新 provider 操作指南。验收：ORC-081、ALU-03/06，无模型时确定性修复仍工作，越权提案不执行，模型不可用不无限排队。
+- [x] 44.1 扩展 runtime/agents.py、node_agent.py，生成 node_supervisor_id 和最小 ContextPacket，按证据 capability 读取并限字节/脱敏；保留现有 owner 身份兼容。验收：ALU-02/03，跨组、私有父会话、路径穿越及秘密内容均拒绝；正常成功调用模型为零。
+- [x] 44.2 新增 runtime/agent_bridge.py 及应用内 provider 接口，实现 capability 检查、幂等 submit、按 request_id lookup、status/cancel/collect；记录模型版本与 usage 上界。验收：ALU-12，丢响应不换 ID 重发，取消须终结回执，缺能力只阻塞依赖该能力的路径。
+- [x] 44.3 实现本项目 HTTP/RPC bridge 协议与配置/认证/scope 文档、受控协议服务测试；不猜测宿主私有 API。验收：ALU-12 的协议错误、认证失效、超时、重复回执反例；应用内 provider 可独立验收，真实宿主留给 49.4。
+- [x] 44.4 实现 supervisor/investigator/coder/reviewer 角色任务、共享预算和默认一层团队限额；接入统一 TaskBackend/Worker 而非内存 spawn。验收：ALU-13、ORC-088，任务/并发/深度超限原子拒绝，reviewer 与 coder 上下文隔离。
+- [x] 44.5 接通已知规则直达修复和未知问题诊断，提案仅选已注册动作或候选路线；更新 provider 操作指南。验收：ORC-081、ALU-03/06，无模型时确定性修复仍工作，越权提案不执行，模型不可用不无限排队。
 
 ## 45. 图内修复循环、恢复计划与分层收口
 
-- [ ] 45.1 在 supervision/remedy handlers、bootstrap 和 work graph 接通 draining→diagnosing→remediating→postcheck 循环，原图与修复共享 work 锁。验收：ALI-01 的真实 StateGraph 节点/事件序列、另一组持续运行；失败 receipt 不被覆盖。
-- [ ] 45.2 实现 compile_recovery 和恢复启动复核，透传 input_refs、合成 result_refs，按失效依赖重验 N01/N02/N03，替代固定“下一编号节点”。验收：ALU-10、ALI-02，fixture 已删、TTL 过期、输入版本改变不跳过准备；同步恢复合同。
-- [ ] 45.3 接入 N04–N08 测量/采样保护、原 operation 接管和新 measurement_generation 授权，禁止性能失败筛选重试。验收：ALU-11、ORC-084、ALI-02，断段/基线失效保留 insufficient，有效性能 fail 不新增测量请求。
-- [ ] 45.4 接通 N07/N09/N10 必经收尾、attempt delivery 与 work fulfilled 分离、T6 缺口返工；closure/cancel/supersede 查询所有生命周期及隔离域。验收：ALU-20、ALI-02，等待/未知资源不能假收口，取消保留 cleanup/reconcile。
-- [ ] 45.5 为 E/C、R/G、A/F 节点接入同一 policy 与自身 scope，缺具体动作走显式 unavailable/候选；更新节点自动化及内部 Mermaid 文档。验收：参数化图测试验证越 scope 派发拒绝、A/F 不创建测量、环境安装未知不盲目重复。
+- [x] 45.1 在 supervision/remedy handlers、bootstrap 和 work graph 接通 draining→diagnosing→remediating→postcheck 循环，原图与修复共享 work 锁。验收：ALI-01 的真实 StateGraph 节点/事件序列、另一组持续运行；失败 receipt 不被覆盖。
+- [x] 45.2 实现 compile_recovery 和恢复启动复核，透传 input_refs、合成 result_refs，按失效依赖重验 N01/N02/N03，替代固定“下一编号节点”。验收：ALU-10、ALI-02，fixture 已删、TTL 过期、输入版本改变不跳过准备；同步恢复合同。
+- [x] 45.3 接入 N04–N08 测量/采样保护、原 operation 接管和新 measurement_generation 授权，禁止性能失败筛选重试。验收：ALU-11、ORC-084、ALI-02，断段/基线失效保留 insufficient，有效性能 fail 不新增测量请求。
+- [x] 45.4 接通 N07/N09/N10 必经收尾、attempt delivery 与 work fulfilled 分离、T6 缺口返工；closure/cancel/supersede 查询所有生命周期及隔离域。验收：ALU-20、ALI-02，等待/未知资源不能假收口，取消保留 cleanup/reconcile。
+  - 2026-10-23 T6 子项已实现：不可变来源/缺口、精确原生命周期接入、恢复子归属、幂等预算、新交付解决、归档门禁；11项专项与278项覆盖门禁通过。跨 scope cancel/supersede 完整矩阵待验收，整项保持未完成。
+  - 2026-10-24 先按 ALD-11 / ATG-08 固定下列检查点，随后继续定位并修正 provider 测试；相关187项和测量/T6门禁278项通过。它们是 45.4 的验收分解，不新增虚假完成数。
+  - 45.4-A（部分完成）：ST-04 已定位并修正 scan()[0] 取错生命周期，按 request+lifecycle 断言；running/cancelled 父状态且子任务未停止均保持 waiting，终结后才 closed，原提交/取消各一次且无恢复派发。相关187项通过，证据见 provider-stop-fix-20261024.md；统一 typed fixture/有界 Worker 推进 helper 仍待完成。
+  - 45.4-B（部分完成）：R3 已修复父 run/group 漏计子 provider；按原 lifecycle/run/组成员归属，同名其他 run 排除，父级只等待不接管。统一 InventorySnapshot、矛盾身份与 legacy 及 ST-01–05 全矩阵仍待完成。
+  - 45.4-C（部分完成）：R1 已区分原操作 drain、到期停止和显式 cancel；预留/I/O 前重验，原后继证明齐全才 version_drained，禁止旧版 retry/recovery。R2 已在角色请求两个事务拒绝新准入并保留原请求幂等。25项专项通过，见 stop-fixes-20261024.md；全部普通入口、迟到事件原子挂接及停止全历史扫描等 ST-06–12 剩余目标待完成。
+  - 45.4-D（待完成）：原子 StopProof/phase/status、处置 revision 与所有效果 writer 接线，closure 统一验收；ST-13/14。
+  - 45.4-E（待完成）：真实图跨 scope/版本组合与本地 runner 的 required nodeid 收集/逐阶段结果核验；ST-15–17、runner 自测及 stop-local 固定回归；通过后仅标本地验证。
+  - 45.4-F（待完成，与 49.2 共用证据）：真实 PG 并发及硬杀 ST-18–20；缺 DSN 保持 blocked/未完成，不能用内存结果勾选完整交付。
+  - 2026-10-24 后续实施：统一 inventory、效果 writer 处置版本、迟到失败挂接、有界 stop jobs、当前证明校验及提交前截止检查已实现；固定 stop-local 的 514 个 nodeid 全阶段通过。14 个 PG/硬杀用例及 stop-persistent 入口已提供，缺 DSN 返回 blocked。详见 [实施与证据](../../../docs/verification/agent-lifecycle-runtime/stop-workflow-20261024.md)。不据局部门禁勾选整项；剩余 ST-16/完整边界映射和 PG 实跑继续追踪。
+- [x] 45.5 为 E/C、R/G、A/F 节点接入同一 policy 与自身 scope，缺具体动作走显式 unavailable/候选；更新节点自动化及内部 Mermaid 文档。验收：参数化图测试验证越 scope 派发拒绝、A/F 不创建测量、环境安装未知不盲目重复。
 
 ## 46. 隔离候选编码与修订循环
 
-- [ ] 46.1 实现 ChangeProposal、base commit/输入快照冻结、候选 workspace 和允许路径 diff；不修改用户脏工作树。验收：ALU-14，base 不一致拒绝、未登记改动不混入、每次冻结 revision 不可变；同步候选合同。
+- [x] 46.1 实现 ChangeProposal、base commit/输入快照冻结、候选 workspace 和允许路径 diff；不修改用户脏工作树。验收：ALU-14，base 不一致拒绝、未登记改动不混入、每次冻结 revision 不可变；同步候选合同。2026-10-24：`EvolutionService`、`CandidateWorkspace` 与持久队列接线已验证，见 `candidate-chain.xml`（66项组合；含本任务专项）。
 - [ ] 46.2 新增 runtime/candidate_worker.py 及隔离后端协议，限制挂载/网络/秘密/argv/时间/产物；交付至少一种真实隔离实现和明确 capability 检查。验收：ALU-14 与 ALI-06，worktree 本身不算安全隔离，生产 canary 不可读、主树不可写。
-- [ ] 46.3 接入 coding provider，使 agent 真正编辑候选代码/图/测试，冻结 revision 后调用可信测试；失败以最小证据反馈并生成新 revision。验收：ALU-15、ALI-05，真实 patch r1 fail→r2 pass，最后预算内成功允许继续，失败历史保留。
-- [ ] 46.4 实现实际 diff/影响分类 R0–R3 与 independent reviewer，检测测试/CI/依赖/权限/口径变化，复用覆盖范围明确的旧授权。验收：ALU-16、ORC-086，模型低风险自评无效，修改可信基线/削弱门禁不因文件类型而自动晋级。
+- [x] 46.3 接入 coding provider，使 agent 真正编辑候选代码/图/测试，冻结 revision 后调用可信测试；失败以最小证据反馈并生成新 revision。验收：ALU-15、ALI-05，真实 patch r1 fail→r2 pass，最后预算内成功允许继续，失败历史保留。
+- [x] 46.4 实现实际 diff/影响分类 R0–R3 与 independent reviewer，检测测试/CI/依赖/权限/口径变化，复用覆盖范围明确的旧授权。验收：ALU-16、ORC-086，模型低风险自评无效，修改可信基线/削弱门禁不因文件类型而自动晋级。
 - [ ] 46.5 实现候选取消、provider 响应未知对账、无进展停止及隔离环境回收；保留候选和日志。验收：ALU-12/15、ALI-05/06，终结前不释放正在运行的隔离实例身份；更新隔离部署与故障文档。
+
+2026-10-24：46.1/46.2 的本地基座已增加 `runtime/candidate_workspace.py` 与 `candidate_isolation.py`：精确 Git base、允许路径和摘要 CAS、独立冻结修订、保守 R3 分类、私有 rootfs 摘要及 Bubblewrap 注册命令、原请求身份和有界执行。11 项专项通过；候选服务/模型编码/门禁/晋级接线和真实隔离验收尚未完成，因此整项不勾选。
 
 ## 47. 测试门禁执行与可信证明
 
-- [ ] 47.1 实现可信风险 profile、required_gates/test_ids 和 N/A 规则，候选外固定 suite/命令/依赖锁；同步 G0–G6 配置说明。验收：ALU-16/17，缺文件、零收集、关键 skip/xfail、参数变体遗漏均拒绝。
+- [x] 47.1 实现可信风险 profile、required_gates/test_ids 和 N/A 规则，候选外固定 suite/命令/依赖锁；同步 G0–G6 配置说明。验收：ALU-16/17，缺文件、零收集、关键 skip/xfail、参数变体遗漏均拒绝。
 - [ ] 47.2 实现可信 runner 的 collect/run/日志/JUnit 对账，候选新增测试单独执行；结果以受信服务身份写 GateManifest。验收：ALU-17/18、ALI-06，自造报告、修改基线、候选写输出路径和进程超时不能得到 pass。
-- [ ] 47.3 实现候选/base/suite/policy/环境/bundle/producer/有效期绑定及兼容证明复用，区分 fail/blocked/not_applicable。验收：ALU-18，任何关键摘要不符失效，人工授权不能覆盖 failed test。
-- [ ] 47.4 提供受控 lifecycle gates 执行/查询入口与开发、持久化、隔离、发布验收 profile；登记所需 pytest markers，实际验证 ATG-04 argv。验收：G1/G2 完整收集；缺 G3 DSN 明确 blocked，不连接默认数据库、不用离线 skip 宣称生产门禁通过。
-- [ ] 47.5 将 ATG-06 关键变异纳入可重复反例测试，记录可信基线与候选测试分离策略；同步验收手册。验收：去 fence、预算归零、fixture 清理后直跳、无限重试、自签 gate、绕过 activation 检查等变异均被指定用例捕获。
+- [x] 47.3 实现候选/base/suite/policy/环境/bundle/producer/有效期绑定及兼容证明复用，区分 fail/blocked/not_applicable。验收：ALU-18，任何关键摘要不符失效，人工授权不能覆盖 failed test。
+- [x] 47.4 提供受控 lifecycle gates 执行/查询入口与开发、持久化、隔离、发布验收 profile；登记所需 pytest markers，实际验证 ATG-04 argv。验收：G1/G2 完整收集；缺 G3 DSN 明确 blocked，不连接默认数据库、不用离线 skip 宣称生产门禁通过。
+- [x] 47.5 将 ATG-06 关键变异纳入可重复反例测试，记录可信基线与候选测试分离策略；同步验收手册。验收：去 fence、预算归零、fixture 清理后直跳、无限重试、自签 gate、绕过 activation 检查等变异均被指定用例捕获。
+
+47.1–47.3 的逐文件接口见 ATG-09；45.4-E 的本地脚本只能提供开发证据，不能替代受信服务的 GateManifest、真实隔离或晋级验收。
 
 ## 48. 晋级、版本运行与操作入口
 
 - [ ] 48.1 实现 PromotionService，将 gate/review/发布授权/有效期/候选身份/worker ready 与 RevisionService 激活 CAS 纳入同一事务，显式传入冻结 target_plan/contract/auth 并核验运行权限，封住 GraphService/CLI/worker 旁路。验收：ALU-19、ALI-07，并发两个候选只一个后继，授权撤销或摘要变更拒绝；R3 新合同用于后继，旧 run 保持旧引用，缺授权不回退继承。
 - [ ] 48.2 实现不可变 code bundle、worker 能力注册和版本匹配领取；无 ready worker 保留 verified_waiting_worker，不提前关闭旧 gate。验收：ALU-19、ALI-08；文档型 R0 不创建空 run，可执行变化必须新 graph_ref。
 - [ ] 48.3 实现旧 run drain、新 run/thread、共享资源域解除后的新测量与回退协议；新版本失败停止新派发并保留旧版本对账能力。验收：ALI-08、ORC-087，旧 operation 不被新代码重发或旧 checkpoint 覆盖。
-- [ ] 48.4 提供 lifecycle status/request-repair/request-change/decision/cancel 与 gates 查询命令，写入统一授权审计，README 给出真实可执行示例。验收：命令合同测试覆盖重复 request、陈旧 revision、缺权限、具体 blocked 原因及恢复入口。
-- [ ] 48.5 实现默认关闭→注册动作→限定 scope→候选演进的迁移开关，兼容旧 records/worker，关闭开关仍允许清理。验收：迁移/回滚集成测试；同步 docs/orchestration/progress.md、setup.md 和 README，分别列 implemented 与 verified 范围。
+- [x] 48.4 提供 lifecycle status/request-repair/request-change/decision/cancel 与 gates 查询命令，写入统一授权审计，README 给出真实可执行示例。验收：命令合同测试覆盖重复 request、陈旧 revision、缺权限、具体 blocked 原因及恢复入口。
+- [x] 48.5 实现默认关闭→注册动作→限定 scope→候选演进的迁移开关，兼容旧 records/worker，关闭开关仍允许清理。验收：迁移/回滚集成测试；同步 docs/orchestration/progress.md、setup.md 和 README，分别列 implemented 与 verified 范围。
 
 ## 49. 组合验收与发布证据
 
-- [ ] 49.1 运行 G0/G1/G2 全部必需 ALU/ALI 离线组合及受影响旧回归，生成实际 nodeids、版本、日志和 GateManifest；核对设计→任务→测试映射。验收：零丢失必需用例，无新增隐藏 skip，正常路径无额外模型/修复派发。
+- [x] 49.1 运行 G0/G1/G2 全部必需 ALU/ALI 离线组合及受影响旧回归，生成实际 nodeids、版本、日志和 local_only 开发门禁记录（生产 GateManifest 由 47.2/49.3 另验收）；核对设计→任务→测试映射。验收：零丢失必需用例，无新增隐藏 skip，正常路径无额外模型/修复派发。
 - [ ] 49.2 使用专用真实 PostgreSQL 完成 ALI-03/04/07 的双 worker、预算竞争、CAS 和逐切点硬杀恢复；保留 SQL 事实与外部效果账本。验收：无丢任务/重复副作用/预算重置，未知效果不盲重发；缺环境保持未完成/blocked。
 - [ ] 49.3 在独立隔离环境完成 ALI-05/06 与 G4，并在验收环境执行 ALI-08/G6 激活前 smoke、激活后观察及回退。验收：真实候选失败后修订成功、真实隔离有效、bundle 身份一致；模拟结果不登记 backend_verified。
 - [ ] 49.4 对实际选择的应用内模型/编码 provider 做集成验收；若选择宿主 bridge，另做 ALI-09 幂等/查询/取消/usage/context 验收。验收：逐 provider 声明 verified/blocked/not_selected，不以 mock 证明已调用宿主 dispatch agent。
-- [ ] 49.5 汇总实施范围、剩余阻塞、门禁证明及可启用动作/profile，复核 OpenSpec strict 与文档链接；仅据实际证据勾选本清单。验收：设计存在、代码实现、离线验证、后端验证和真实适配验证明确分开，无未经证据的“全节点自动自愈已完成”表述。
+- [x] 49.5 汇总实施范围、剩余阻塞、门禁证明及可启用动作/profile，复核 OpenSpec strict 与文档链接；仅据实际证据勾选本清单。验收：设计存在、代码实现、离线验证、后端验证和真实适配验证明确分开，无未经证据的“全节点自动自愈已完成”表述。
 
 ## 50. 资源观测合同强制与缺失显式化（issue #8）
 
@@ -404,4 +421,58 @@
 - [x] 50.6 独立单元测试：`tests/benchmark/unit/test_resource_contract.py`（BCT-15）。验收：全组通过；字面量 oracle，不调用被测函数生成预期。
 - [ ] 50.7 真实环境：在真实部署提供 inventory + collector 绑定，确认能采集到非零样本或显式 `insufficient_samples`。验收：需真实环境（135.214.237.243）；缺环境保持 blocked。
 - [x] 50.8 口径分列（RT-49）：净底噪（去 Guest OS，`net_pss = raw_pss − guest_component_pss`）与每沙箱平均开支（含 Guest OS）分列、不混加；业界方法为 Firecracker `MemoryMonitor` 跳过 guest 内存区。同步 [scenario-spec.md](scenario-spec.md) §10/§11 与 [benchmark-design.md](benchmark-design.md) BCD-09。验收：BCT-15-CALIBER-SPLIT。
-- [ ] 50.9 创建后保持变体（planned）：新增注册方法（拟 `B01.*.HOLD`/`B02.*.HOLD`）——创建后保持到资源窗口覆盖 N04→N06→N07 再删，产出含 Guest OS 的每沙箱开支（RT-49）；经 Selection `methods` 纳入，实现属新增能力（图版本变更，WF-38）。规范见 [scenario-spec.md](scenario-spec.md) §15.1。验收：需 code 侧（`registry.METHODS` + 适配器/场景 + hold 步骤）与真机；未实现前保持 `planned`。
+- [ ] 50.9 创建后保持变体（代码和本地验证完成，真实验收待完成）：新增注册方法（拟 `B01.*.HOLD`/`B02.*.HOLD`）——创建后保持到资源窗口覆盖 N04→N06→N07 再删，产出含 Guest OS 的每沙箱开支（RT-49）；经 Selection `methods` 纳入，实现属新增能力（图版本变更，WF-38）。规范见 [scenario-spec.md](scenario-spec.md) §15.1。验收：需 code 侧（`registry.METHODS` + 适配器/场景 + hold 步骤）与真机；2026-10-24 已实现五种方法和 `hold:1` 图、有限保持窗口、实际就绪分母及独立原始证据封存；92 项相关回归通过。整项因真机验收保持未勾选。
+
+## 51. 条件参数外部化（完整用例生成）
+
+规格 [RT-50](specs/runtime-evaluation/spec.md)，详设 [benchmark-design.md](benchmark-design.md) BCD-20，测试合同 [benchmark-contract-design.md](benchmark-contract-design.md) BCT-16，条件轴见 [benchmark-matrix.md](../../../docs/benchmark-matrix.md)。语义：**完整生成**（文件即用例，无 overlay、无隐式 base）。
+
+- [x] 51.1 定义完整用例文件格式与严格生成器 `sandbox_bench/casegen.py`（自包含、未知键拒绝、`NvMg` 规格解析、缺必填报错）。验收：BCT-16-COMPLETE/PARSE/STRICT。
+- [x] 51.2 文件→`CaseContract` 生成，复用既有严格校验（不另写必填规则）。验收：BCT-16-GENERATE。
+- [x] 51.3 接线：bench（`run_mock`/`runner case`）与图 dispatch 从生成用例取值（对应 `CONDITION_FIELDS`）。验收：BCT-16-GENERATE。
+- [x] 51.4 矩阵 `axes` 展开为多份用例（与 `Selection` 分离）。验收：BCT-16-MATRIX。
+- [x] 51.5 证据与可比性：文件摘要 + 生成用例摘要 + 条件值入证据/可比性键。验收：BCT-16-EVIDENCE。
+- [x] 51.6 仓内低条件档与文档：`config/*.yaml`、`docs/conditions-profile.md`、`benchmark-matrix.md` 交叉引用。验收：BCT-16-GENERATE。
+- [x] 51.7 独立单测 `tests/benchmark/unit/test_casegen.py`（BCT-16，字面量 oracle）。验收：全组通过。
+
+2026-10-24：51.1—51.7 已实现。`test_casegen.py` 的完整文件、矩阵、CLI、真实图 session 与来源证据反例及 session/bindings 相关测试共 37 项通过；另含 capacity-wake 的首轮 18 项通过。真实产品执行没有由这些结果提升状态。
+
+## 2026-10-24 继续实施证据
+
+44.4、45.5、46.3、48.4 的实现和本地合同验收已完成：真实 TaskBackend/Worker 角色派发、scope 看护且无测量越权、实际候选文件 r1 fail→r2 pass、CLI 精确授权/幂等/撤销复验。72 项定向用例通过，JUnit 为 `artifacts/reviews/continuation-20261024/task-evidence.xml`；节点 S/M/H 与 Mermaid 已同步。真实 provider、隔离和 PG 仍分别由 49.2–49.4 验收。
+
+47.2 的 controller pytest、48.3 的 rollback、48.5 的 rollout 已有代码和定向测试，但各行包含的完整生产/组合验收仍按未勾选追踪。当前剩余代码与验证边界见 [继续实施记录](../../../docs/verification/agent-lifecycle-runtime/continuation-20261024.md)。
+
+2026-10-24 账本回归修复：15.3 的大日志证据外置并保留公开重入/封存结构，BTC-052 的 N00—N10、分析与归档图测试恢复通过；新增终态前后进程退出切点和证据损坏拒绝。32 项图/session 定向测试与 33 项修复/账本组合通过，集合有重叠不相加。首次全量失败与修复后回归使用不同报告路径，见继续实施记录；不据此勾选生产隔离/PG/真实沙箱验收。
+
+本轮最终本地验证：根目录 **3112 passed、44 skipped、110 subtests passed**；固定 development profile **2441/2441 pass，local_only**，收集和阶段回执、JUnit、输入摘要一致。证据为 `artifacts/reviews/continuation-20261024/root-regression-fixed.xml` 及 `development-fixed/summary.json`。剩余代码与后端验收仍单列，不据本地门禁勾选 49.1—49.5 的完整交付。
+
+## 52. 部署执行边界与故障代码补齐
+
+- [x] 52.1 实现 `eval bundle-worker` 的 manifest/tree/runtime 验证与独立解释器启动；真实子进程验证导入来源、配置漂移及无关秘密不透传。
+- [x] 52.2 修复隔离 execute 已完成而独立 reconcile 未知时仍交付成功的缺口；保留 original isolation，门禁阻塞并验证无处置证明。
+- [x] 52.3 编写真实 PG 的 repair/promotion/rollback 及 effect→receipt→outcome 硬杀矩阵代码；固定切点可收集，真实时钟 seed 合同可本地验证；实际执行仍属 49.2。
+- [x] 52.4 完整执行 ATG-06 固定变异反例、冻结当前 profile 并跑受影响回归；同步全部任务/规格与最新证据。
+
+- [x] 52.5 实现六 gate 外部可信套件的固定装配工具，复制验摘要、控制端真实收集、精确 nodeid 和边界校验，输出 prepared/unverified；拒绝缺 gate、源/候选交叠与摘要漂移，不能签发 GateManifest。
+
+### 2026-10-24 当前代码与后端验收分界
+
+本轮交付和原始门禁路径见[连续补齐记录](../../../docs/verification/agent-lifecycle-runtime/remaining-20261024.md)。47.1/47.3/47.5 的固定 profile、外部套件装配、身份绑定和十类实际变异已交付；47.2 保留完整 G4 生产隔离验收要求，不能用装配工具或开发 pytest 替代。生产用 controller oracle/隔离命令必须由部署者冻结；本仓提供独立 suite 装配与精确收集、受信执行机制，未声称任意部署自动具有完整生产黑盒套件。
+
+43.1–43.5 的原子事务、预算、对账、outbox 已有实现和本地合同；新增 15 项 PG 硬杀门禁覆盖 repair/promotion/rollback/outcome 切点，但未提供专用 DSN，整项的 ALI-03/04 验收保持未完成。46.2/46.5、48.1–48.3、49.2–49.4 分别保留隔离/provider/PG/发布环境要求。`bundle-worker` 已消除主工作树导入候选版本的问题，不能据此跳过隔离与 ready worker 认证。
+
+## 53. 持久化门禁矩阵补齐
+
+- [x] 53.1 补充 saver 同步/异步 checkpoint/pending writes 的两种锁顺序，独立连接观察实际 blocking PID 并核对行数；8 个新 PG 用例已交付，执行验证仍归 4.2/49.2。
+
+本地端到端补充映射：14.2 的真实 Worker/StateGraph/BenchSession/公式/Excel/归档组合在 `tests/benchmark/integration/test_five_stage_worker.py`，两组真实服务装配、一个组业务失败仍生成 partial 档案；远端执行边界明确是 fixture。人工等待、增量分析与 only-analysis/report 分别由 graphs/test_human_wait、test_group_delivery 和 benchmark/integration/test_analysis_graph 验证。不能以早期 e2e/test_end_to_end 的简单路由样例替代这批组合用例。45.4 的 stop 链与 48.5 的迁移开关分别有真实 Worker 和 rollout 服务反例；PG/产品/provider 验收保持原任务边界。
+
+本轮固定 development 门禁 2529/2529 通过、零错误、零 skip；ATG-06 十类变异全部捕获；三 change strict/链接校验有效。全仓回归为 3199 passed / 69 skipped / 110 subtests；后增独立 APISecret 的两项测试已包含在 development 2529 中，不与全仓计数相加。52.4/49.1 是离线证据，不解除 PG/隔离/provider/产品验收。
+
+## 54. 非环境实现缺口（2026-10-26 提交快照）
+
+- [ ] 54.1 交付仓内维护的通用生产黑盒断言与固定观察脚本，覆盖适用 G0/G1/G2 基础语义及 G3/G4/G6 独立观察合同；不能仅交付外部套件装配器或要求部署者自行补全部测试内容。部署参数与实际后端验收另列。
+- [ ] 54.2 为上述具体套件补齐正反例、候选自报成功拒绝、收集/超时/缺见证拒绝与运行说明；用实际测试证明断言生效，保持现有 ALU/ALI 必需集合和隔离信任边界。
+
+当前 52.5 只完成套件装配。54.1/54.2 是明确尚未交付的实现，不归类为缺机器或缺部署配置；原 47.2 的完整验收仍未完成。

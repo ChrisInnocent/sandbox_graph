@@ -1,0 +1,190 @@
+tests/orchestration/unit/test_verify_planning.py::test_accepts_any_nonempty_unique_well_formed_task_set[one]
+tests/orchestration/unit/test_verify_planning.py::test_accepts_any_nonempty_unique_well_formed_task_set[historical-96]
+tests/orchestration/unit/test_verify_planning.py::test_accepts_any_nonempty_unique_well_formed_task_set[current-209]
+tests/orchestration/unit/test_verify_planning.py::test_rejects_empty_or_duplicate_tasks[empty]
+tests/orchestration/unit/test_verify_planning.py::test_rejects_empty_or_duplicate_tasks[heading-only]
+tests/orchestration/unit/test_verify_planning.py::test_rejects_empty_or_duplicate_tasks[duplicate-id]
+tests/orchestration/unit/test_verify_planning.py::test_rejects_malformed_checkbox_in_otherwise_valid_tasks[uppercase]
+tests/orchestration/unit/test_verify_planning.py::test_rejects_malformed_checkbox_in_otherwise_valid_tasks[unknown-state]
+tests/orchestration/unit/test_verify_planning.py::test_rejects_malformed_checkbox_in_otherwise_valid_tasks[missing-state]
+tests/orchestration/unit/test_verify_planning.py::test_rejects_malformed_checkbox_in_otherwise_valid_tasks[missing-subtask]
+tests/orchestration/unit/test_verify_planning.py::test_rejects_malformed_checkbox_in_otherwise_valid_tasks[missing-description]
+tests/orchestration/unit/test_verify_planning.py::test_rejects_malformed_checkbox_in_otherwise_valid_tasks[blank-description]
+tests/orchestration/unit/test_verify_planning.py::test_rejects_malformed_checkbox_in_otherwise_valid_tasks[missing-separator]
+tests/orchestration/unit/test_verify_planning.py::test_rejects_malformed_checkbox_in_otherwise_valid_tasks[indented]
+tests/orchestration/unit/test_verify_planning.py::test_retains_link_openspec_and_registry_constraints[broken-link]
+tests/orchestration/unit/test_verify_planning.py::test_retains_link_openspec_and_registry_constraints[strict-failure]
+tests/orchestration/unit/test_verify_planning.py::test_retains_link_openspec_and_registry_constraints[node-count]
+
+==================================== ERRORS ====================================
+______ ERROR collecting tests/orchestration/graphs/test_work_recovery.py _______
+ImportError while importing test module '/storage/Users/currentUser/IDEProjects/sandbox_graph/.worktrees/agent-lifecycle/tests/orchestration/graphs/test_work_recovery.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+tests/orchestration/graphs/test_work_recovery.py:10: in <module>
+    from sandbox_graph.catalog.registry import NODE_GROUPS
+E   ModuleNotFoundError: No module named 'sandbox_graph'
+_____ ERROR collecting tests/orchestration/graphs/test_work_remediation.py _____
+ImportError while importing test module '/storage/Users/currentUser/IDEProjects/sandbox_graph/.worktrees/agent-lifecycle/tests/orchestration/graphs/test_work_remediation.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+tests/orchestration/graphs/test_work_remediation.py:7: in <module>
+    from sandbox_graph.catalog.registry import NODE_GROUPS
+E   ModuleNotFoundError: No module named 'sandbox_graph'
+_______ ERROR collecting tests/orchestration/graphs/test_work_safety.py ________
+ImportError while importing test module '/storage/Users/currentUser/IDEProjects/sandbox_graph/.worktrees/agent-lifecycle/tests/orchestration/graphs/test_work_safety.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+tests/orchestration/graphs/test_work_safety.py:7: in <module>
+    from sandbox_graph.domain.models import NodeResult
+E   ModuleNotFoundError: No module named 'sandbox_graph'
+________ ERROR collecting tests/orchestration/unit/test_agent_bridge.py ________
+ImportError while importing test module '/storage/Users/currentUser/IDEProjects/sandbox_graph/.worktrees/agent-lifecycle/tests/orchestration/unit/test_agent_bridge.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+tests/orchestration/unit/test_agent_bridge.py:13: in <module>
+    from sandbox_graph.runtime.agent_bridge import (
+E   ModuleNotFoundError: No module named 'sandbox_graph'
+______ ERROR collecting tests/orchestration/unit/test_evolution_models.py ______
+ImportError while importing test module '/storage/Users/currentUser/IDEProjects/sandbox_graph/.worktrees/agent-lifecycle/tests/orchestration/unit/test_evolution_models.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+tests/orchestration/unit/test_evolution_models.py:5: in <module>
+    from sandbox_graph.domain.evolution import (
+E   ModuleNotFoundError: No module named 'sandbox_graph'
+_____ ERROR collecting tests/orchestration/unit/test_lifecycle_budgets.py ______
+ImportError while importing test module '/storage/Users/currentUser/IDEProjects/sandbox_graph/.worktrees/agent-lifecycle/tests/orchestration/unit/test_lifecycle_budgets.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+tests/orchestration/unit/test_lifecycle_budgets.py:6: in <module>
+    from sandbox_graph.persistence.repository import Conflict
+E   ModuleNotFoundError: No module named 'sandbox_graph'
+_____ ERROR collecting tests/orchestration/unit/test_lifecycle_closure.py ______
+ImportError while importing test module '/storage/Users/currentUser/IDEProjects/sandbox_graph/.worktrees/agent-lifecycle/tests/orchestration/unit/test_lifecycle_closure.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+tests/orchestration/unit/test_lifecycle_closure.py:4: in <module>
+    from sandbox_graph.domain.models import NodeResult
+E   ModuleNotFoundError: No module named 'sandbox_graph'
+_____ ERROR collecting tests/orchestration/unit/test_lifecycle_context.py ______
+ImportError while importing test module '/storage/Users/currentUser/IDEProjects/sandbox_graph/.worktrees/agent-lifecycle/tests/orchestration/unit/test_lifecycle_context.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+tests/orchestration/unit/test_lifecycle_context.py:8: in <module>
+    from sandbox_graph.artifacts.store import FileArtifactStore
+E   ModuleNotFoundError: No module named 'sandbox_graph'
+_____ ERROR collecting tests/orchestration/unit/test_lifecycle_dispatch.py _____
+ImportError while importing test module '/storage/Users/currentUser/IDEProjects/sandbox_graph/.worktrees/agent-lifecycle/tests/orchestration/unit/test_lifecycle_dispatch.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+tests/orchestration/unit/test_lifecycle_dispatch.py:5: in <module>
+    from sandbox_graph.runtime.worker import Worker, WorkerPolicy
+E   ModuleNotFoundError: No module named 'sandbox_graph'
+______ ERROR collecting tests/orchestration/unit/test_lifecycle_models.py ______
+ImportError while importing test module '/storage/Users/currentUser/IDEProjects/sandbox_graph/.worktrees/agent-lifecycle/tests/orchestration/unit/test_lifecycle_models.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+tests/orchestration/unit/test_lifecycle_models.py:5: in <module>
+    from sandbox_graph.domain.agent_lifecycle import (
+E   ModuleNotFoundError: No module named 'sandbox_graph'
+______ ERROR collecting tests/orchestration/unit/test_lifecycle_safety.py ______
+ImportError while importing test module '/storage/Users/currentUser/IDEProjects/sandbox_graph/.worktrees/agent-lifecycle/tests/orchestration/unit/test_lifecycle_safety.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+tests/orchestration/unit/test_lifecycle_safety.py:6: in <module>
+    from sandbox_graph.persistence.repository import Conflict, StaleOwner
+E   ModuleNotFoundError: No module named 'sandbox_graph'
+_ ERROR collecting tests/orchestration/unit/test_lifecycle_schema_compatibility.py _
+ImportError while importing test module '/storage/Users/currentUser/IDEProjects/sandbox_graph/.worktrees/agent-lifecycle/tests/orchestration/unit/test_lifecycle_schema_compatibility.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+tests/orchestration/unit/test_lifecycle_schema_compatibility.py:8: in <module>
+    from sandbox_graph.domain.agent_lifecycle import (
+E   ModuleNotFoundError: No module named 'sandbox_graph'
+_____ ERROR collecting tests/orchestration/unit/test_lifecycle_service.py ______
+ImportError while importing test module '/storage/Users/currentUser/IDEProjects/sandbox_graph/.worktrees/agent-lifecycle/tests/orchestration/unit/test_lifecycle_service.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+tests/orchestration/unit/test_lifecycle_service.py:6: in <module>
+    from sandbox_graph.domain.agent_lifecycle import LifecycleEvent, RepairPolicy
+E   ModuleNotFoundError: No module named 'sandbox_graph'
+______ ERROR collecting tests/orchestration/unit/test_lifecycle_state.py _______
+ImportError while importing test module '/storage/Users/currentUser/IDEProjects/sandbox_graph/.worktrees/agent-lifecycle/tests/orchestration/unit/test_lifecycle_state.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+tests/orchestration/unit/test_lifecycle_state.py:4: in <module>
+    from sandbox_graph.domain.agent_lifecycle import (
+E   ModuleNotFoundError: No module named 'sandbox_graph'
+_______ ERROR collecting tests/orchestration/unit/test_recovery_plan.py ________
+ImportError while importing test module '/storage/Users/currentUser/IDEProjects/sandbox_graph/.worktrees/agent-lifecycle/tests/orchestration/unit/test_recovery_plan.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+tests/orchestration/unit/test_recovery_plan.py:6: in <module>
+    from sandbox_graph.domain.models import NodeResult
+E   ModuleNotFoundError: No module named 'sandbox_graph'
+________ ERROR collecting tests/orchestration/unit/test_remediation.py _________
+ImportError while importing test module '/storage/Users/currentUser/IDEProjects/sandbox_graph/.worktrees/agent-lifecycle/tests/orchestration/unit/test_remediation.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+tests/orchestration/unit/test_remediation.py:7: in <module>
+    from sandbox_graph.domain.models import NodeResult
+E   ModuleNotFoundError: No module named 'sandbox_graph'
+____ ERROR collecting tests/orchestration/unit/test_remediation_requests.py ____
+ImportError while importing test module '/storage/Users/currentUser/IDEProjects/sandbox_graph/.worktrees/agent-lifecycle/tests/orchestration/unit/test_remediation_requests.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+tests/orchestration/unit/test_remediation_requests.py:6: in <module>
+    from sandbox_graph.domain.agent_lifecycle import LifecycleEvent, RepairRequest
+E   ModuleNotFoundError: No module named 'sandbox_graph'
+_______ ERROR collecting tests/orchestration/unit/test_remedy_leases.py ________
+ImportError while importing test module '/storage/Users/currentUser/IDEProjects/sandbox_graph/.worktrees/agent-lifecycle/tests/orchestration/unit/test_remedy_leases.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+tests/orchestration/unit/test_remedy_leases.py:8: in <module>
+    from sandbox_graph.domain.models import NodeResult
+E   ModuleNotFoundError: No module named 'sandbox_graph'
+_______ ERROR collecting tests/orchestration/unit/test_repair_catalog.py _______
+ImportError while importing test module '/storage/Users/currentUser/IDEProjects/sandbox_graph/.worktrees/agent-lifecycle/tests/orchestration/unit/test_repair_catalog.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+tests/orchestration/unit/test_repair_catalog.py:9: in <module>
+    from sandbox_graph.catalog.repair_actions import (
+E   ModuleNotFoundError: No module named 'sandbox_graph'
+______ ERROR collecting tests/orchestration/unit/test_repair_execution.py ______
+ImportError while importing test module '/storage/Users/currentUser/IDEProjects/sandbox_graph/.worktrees/agent-lifecycle/tests/orchestration/unit/test_repair_execution.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+tests/orchestration/unit/test_repair_execution.py:7: in <module>
+    from sandbox_graph.domain.models import ErrorRecord, NodeResult
+E   ModuleNotFoundError: No module named 'sandbox_graph'
+_____ ERROR collecting tests/orchestration/unit/test_review_supervision.py _____
+ImportError while importing test module '/storage/Users/currentUser/IDEProjects/sandbox_graph/.worktrees/agent-lifecycle/tests/orchestration/unit/test_review_supervision.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+tests/orchestration/unit/test_review_supervision.py:4: in <module>
+    from sandbox_graph.domain.models import NodeResult
+E   ModuleNotFoundError: No module named 'sandbox_graph'
+=========================== short test summary info ============================
+ERROR tests/orchestration/graphs/test_work_recovery.py
+ERROR tests/orchestration/graphs/test_work_remediation.py
+ERROR tests/orchestration/graphs/test_work_safety.py
+ERROR tests/orchestration/unit/test_agent_bridge.py
+ERROR tests/orchestration/unit/test_evolution_models.py
+ERROR tests/orchestration/unit/test_lifecycle_budgets.py
+ERROR tests/orchestration/unit/test_lifecycle_closure.py
+ERROR tests/orchestration/unit/test_lifecycle_context.py
+ERROR tests/orchestration/unit/test_lifecycle_dispatch.py
+ERROR tests/orchestration/unit/test_lifecycle_models.py
+ERROR tests/orchestration/unit/test_lifecycle_safety.py
+ERROR tests/orchestration/unit/test_lifecycle_schema_compatibility.py
+ERROR tests/orchestration/unit/test_lifecycle_service.py
+ERROR tests/orchestration/unit/test_lifecycle_state.py
+ERROR tests/orchestration/unit/test_recovery_plan.py
+ERROR tests/orchestration/unit/test_remediation.py
+ERROR tests/orchestration/unit/test_remediation_requests.py
+ERROR tests/orchestration/unit/test_remedy_leases.py
+ERROR tests/orchestration/unit/test_repair_catalog.py
+ERROR tests/orchestration/unit/test_repair_execution.py
+ERROR tests/orchestration/unit/test_review_supervision.py
+!!!!!!!!!!!!!!!!!!! Interrupted: 21 errors during collection !!!!!!!!!!!!!!!!!!!
+17 tests collected, 21 errors in 2.61s

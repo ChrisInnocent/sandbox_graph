@@ -75,6 +75,9 @@ class Adapter:
         self.api_url = config["api_url"].rstrip("/")
         self.data_url = config["data_url"].rstrip("/")
         self.headers = {"Content-Type": "application/json"}
+        if config.get('auth_ref') is not None:
+            from sandbox_graph.environment.bindings import resolve_benchmark_credential
+            self.headers['X-API-Key']=resolve_benchmark_credential(config)
         env = config.get("api_key_env")
         if env:
             secret = os.environ.get(env)
@@ -84,6 +87,13 @@ class Adapter:
         # Kuasar 集群：控制面/数据面与单机差异大（Host/group/route-key/minted key）。
         self._route_keys = {}
         self._owned = {}
+        self._instance_vault = None
+        credentials = config.get('instance_credentials')
+        if credentials is not None:
+            if not isinstance(credentials,dict) or set(credentials)!={'path','scope','generation'}:
+                raise ValueError('instance_credentials requires private path, scope and generation')
+            from sandbox_graph.environment.instance_tokens import InstanceTokenVault
+            self._instance_vault=InstanceTokenVault(credentials['path'],scope=credentials['scope'],generation=credentials['generation'])
         self.cluster = None
         cluster = config.get("kuasar_cluster")
         if cluster is not None:
@@ -91,12 +101,19 @@ class Adapter:
                 raise ValueError("kuasar_cluster requires product kuasar")
             if not isinstance(cluster, dict):
                 raise ValueError("kuasar_cluster must be a mapping")
-            for key in ("api_host", "group", "domain", "api_secret_env"):
+            for key in ("api_host", "group", "domain"):
                 if not isinstance(cluster.get(key), str) or not cluster[key]:
                     raise ValueError(f"kuasar_cluster.{key} is required")
-            hex_secret = os.environ.get(cluster["api_secret_env"])
+            if bool(cluster.get('credential'))==bool(cluster.get('api_secret_env')):
+                raise ValueError('cluster credential and api_secret_env are mutually exclusive and one is required')
+            if cluster.get('credential'):
+                from sandbox_graph.environment.bindings import resolve_benchmark_credential
+                hex_secret=resolve_benchmark_credential(cluster['credential'])
+            else:
+                if not isinstance(cluster['api_secret_env'],str):raise ValueError('cluster api_secret_env must be a name')
+                hex_secret = os.environ.get(cluster["api_secret_env"])
             if not hex_secret:
-                raise ValueError("cluster API secret environment variable is missing")
+                raise ValueError("cluster API secret is missing")
             try:
                 secret = bytes.fromhex(hex_secret)
             except ValueError as error:
@@ -138,6 +155,12 @@ class Adapter:
         encoded = None if body is None else json.dumps(body, allow_nan=False).encode()
         headers = dict(self.headers)
         if self.cluster is not None and sandbox_id is not None:
+            if self._instance_vault is not None:
+                if method in {'GET','HEAD'}:
+                    credentials=self._instance_vault.observe_route(sandbox_id)
+                    route=credentials.get('routeKey') or credentials.get('route_key')
+                    if route:self._route_keys[sandbox_id]=route
+                else:self._restore_instance({'sandbox_id':sandbox_id})
             key = self._route_keys.get(sandbox_id)
             if not key:
                 raise ValueError("cluster request for an unknown sandbox has no route key")
@@ -146,6 +169,8 @@ class Adapter:
                           headers=headers, timeout=timeout)
 
     def create(self, run_id, timeout):
+        if self._instance_vault is not None and self._instance_vault.scope!=run_id:
+            raise PermissionError('instance credential scope differs from create owner')
         source = self.config["source"]
         if source.get("kind") not in ("template", "snapshot", "image") or not isinstance(source.get("id"), str) or not source["id"]:
             raise ValueError("invalid source")
@@ -172,7 +197,23 @@ class Adapter:
                 raise ValueError("kuasar cluster create must return a route key")
             self._route_keys[result["sandbox_id"]] = route
             self._owned.setdefault(run_id, set()).add(result["sandbox_id"])
+        self._save_instance(result)
         return result
+
+    def _save_instance(self,sandbox):
+        if self._instance_vault is None:return
+        from sandbox_graph.environment.instance_tokens import TOKEN_FIELDS
+        credentials={key:value for key,value in sandbox.get('private',{}).items() if key in TOKEN_FIELDS}
+        if credentials:self._instance_vault.save(sandbox['sandbox_id'],credentials)
+
+    def _restore_instance(self,sandbox):
+        if self._instance_vault is None:return sandbox
+        try:credentials=self._instance_vault.load(sandbox['sandbox_id'])
+        except KeyError as exc:raise ValueError('instance data credentials are absent or revoked') from exc
+        sandbox.setdefault('private',{}).update(credentials)
+        route=credentials.get('routeKey') or credentials.get('route_key')
+        if route:self._route_keys[sandbox['sandbox_id']]=route
+        return sandbox
 
     def info(self, sandbox, timeout):
         path = "/sandboxes/" + quote(sandbox["sandbox_id"], safe="")
@@ -181,9 +222,12 @@ class Adapter:
         if not isinstance(data, dict):
             raise ValueError("invalid sandbox detail")
         sandbox.setdefault("private", {}).update(data)
+        if self._instance_vault is None or not self._instance_vault.is_closed(sandbox['sandbox_id']):
+            self._save_instance(sandbox)
         return data
 
     def execute(self, sandbox, command, timeout):
+        self._restore_instance(sandbox)
         private = sandbox.get("private", {})
         sid = sandbox["sandbox_id"]
         headers = {"Content-Type": "application/connect+json",
@@ -235,10 +279,14 @@ class Adapter:
     def delete(self, sandbox, timeout):
         self._control("DELETE", "/sandboxes/" + quote(sandbox["sandbox_id"], safe=""), timeout,
                       sandbox_id=sandbox["sandbox_id"])
+        if self._instance_vault is not None:self._instance_vault.close(sandbox['sandbox_id'])
 
     def list_owned(self, run_id, timeout):
         if self.cluster is not None:
             # 集群 list 不带 per-run metadata tag；用会话内归属跟踪（create 时记录）。
+            if self._instance_vault is not None:
+                if self._instance_vault.scope!=run_id:raise PermissionError('instance listing scope mismatch')
+                return [self._restore_instance({'sandbox_id':sid}) for sid in self._instance_vault.owned()]
             return [{"sandbox_id": sid, "private": {}} for sid in sorted(self._owned.get(run_id, ()))]
         deadline = time.monotonic() + timeout
         result, ids, cursors = [], set(), set()
@@ -285,8 +333,9 @@ class Adapter:
         """Only the detail endpoint: connect/data-plane can wake a paused VM."""
         data = self.info(sandbox, timeout)
         state = data.get("state", "unknown")
+        from sandbox_graph.environment.evidence import SecretRedactor
         return {"sandbox_id": sandbox["sandbox_id"], "state": state,
-                "raw": {k: v for k, v in data.items() if "token" not in k.lower()}}
+                "raw": SecretRedactor().redact({k: v for k, v in data.items() if "token" not in k.lower()})}
 
     def pause(self, sandbox, timeout, *, memory=True):
         path = "/sandboxes/" + quote(sandbox["sandbox_id"], safe="") + "/pause"
@@ -305,6 +354,7 @@ class Adapter:
         if result["sandbox_id"] != sandbox["sandbox_id"]:
             raise ValueError("resume changed sandbox identity")
         sandbox.setdefault("private", {}).update(result["private"])
+        self._save_instance(sandbox)
         return result
 
     def renew(self, sandbox, ttl, timeout):
@@ -327,7 +377,10 @@ class Adapter:
         for row in rows:
             if not isinstance(row, dict) or set(row) not in ({"sandbox"}, {"error"}):
                 raise ValueError("invalid fork item")
-            if "sandbox" in row: results.append({"sandbox": _sandbox(row["sandbox"], response)})
+            if "sandbox" in row:
+                child=_sandbox(row['sandbox'],response)
+                self._save_instance(child)
+                results.append({'sandbox':child})
             else:
                 error = row["error"]
                 if not isinstance(error, dict): raise ValueError("invalid fork error")

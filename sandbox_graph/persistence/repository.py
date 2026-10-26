@@ -96,10 +96,16 @@ class UnitOfWork:
             raise Conflict('revision conflict')
         revision = actual + 1
         self.connection.execute('INSERT INTO orchestration_records(kind,key,revision,body) VALUES (%s,%s,%s,%s) ON CONFLICT(kind,key) DO UPDATE SET revision=EXCLUDED.revision,body=EXCLUDED.body', (kind,key,revision,Jsonb(body)))
+        from ..services.lifecycle_disposition import DispositionVersions
+        DispositionVersions.changed_in(self,kind,key,old['body'] if old else None,body)
         return revision
 
     def delete(self, kind: str, key: str):
+        old = self.get(kind,key)
         self.connection.execute('DELETE FROM orchestration_records WHERE kind=%s AND key=%s', (kind,key))
+        if old:
+            from ..services.lifecycle_disposition import DispositionVersions
+            DispositionVersions.changed_in(self,kind,key,old['body'],None)
 
     def acquire_thread(self, thread_id: str, owner: str, ttl: float) -> LeaseToken:
         positive_duration(ttl)
@@ -112,6 +118,11 @@ class UnitOfWork:
 
     def assert_fence(self, token: LeaseToken):
         assert_fence_cursor(self.connection, token)
+
+    def thread_lease_until(self, token: LeaseToken) -> float:
+        self.assert_fence(token)
+        row = self.connection.execute('SELECT extract(epoch FROM lease_until) AS until FROM thread_leases WHERE thread_id=%s FOR UPDATE', (token.thread_id,)).fetchone()
+        return float(row['until'])
 
     def renew_thread(self, token: LeaseToken, ttl: float) -> LeaseToken:
         positive_duration(ttl)

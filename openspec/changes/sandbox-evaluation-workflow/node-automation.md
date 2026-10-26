@@ -1,12 +1,12 @@
 # 工作节点脚本化职责与实现状态
 
-2026-10-21，设计草案。本文是所有工作节点的职责索引；内部步骤与分支见 [node-workflows.md](node-workflows.md)，测量语义见 [test-nodes.md](test-nodes.md)，全局拓扑见 [design.md](design.md)。不修改执行代码，不代表已有可运行的 LangGraph 或统一测试系统。
+2026-10-24。本文是工作节点的职责索引；内部步骤与分支见 [node-workflows.md](node-workflows.md)，测量语义见 [test-nodes.md](test-nodes.md)，全局拓扑见 [design.md](design.md)。LangGraph、脚本适配与生命周期服务已有实现；逐项验证边界见 [当前能力账本](../../../docs/orchestration/lifecycle-status.md)，不能把设计职责等同于真实环境已验收。
 
 ## 1. 如何读“脚本化”
 
 | 标记 | 含义 | 当前状态 |
 |---|---|---|
-| S | 目标上由确定性程序、脚本、调度器或渲染器完成；规则固定后不需要模型推理 | 本表所有统一节点均为 planned，未完成端到端验收 |
+| S | 由确定性程序、脚本、调度器或渲染器完成；规则固定后不需要模型推理 | 实现与本地验证按 tasks 追踪；真实环境验收单列 |
 | M | 需要模型理解自然语言、审计语义、诊断未知异常或撰写证据约束的解释 | 结果为有来源的提案／解释，不覆盖原始事实 |
 | H | 必要的人类输入、意图、授权范围或业务取舍 | 仅在已有记录不能解决时触发；不是逐节点常规批准 |
 | 未脚本化 | 必须继续标注原因：语义判断、业务决策、缺规则、缺适配或只有草稿 | “缺规则／缺适配”不等于永久无法脚本化 |
@@ -19,7 +19,13 @@ S 是**应当脚本化的职责**，不是完成声明。实现状态独立使�
 >
 > **WF-04 三级 owner agent（已接线）**：`runtime/agents.py` 提供 `node_agent_level`/`agent_id_for`/`owner_agent_for`；`NodeExecutor` 为每个节点写入真实 owner 身份（root/group/work，未注册节点退化为节点级身份）。**节点 agent 层**：`runtime/node_agent.py` 的 `NodeAgent` 包装每个节点的执行——只将**职责内的输入**（部署配置 `agent_allowlists`，越界即拒，不静默扩大范围）交给注册脚本，调用脚本得到结果，做**规则复审**并写 `node_reviews`（findings/decision）；复审**不覆盖**下级执行事实。脚本执行保持确定性（同一输入同一结果）。节点非成功（`failed`/`blocked`）时写 `agent_supervision` 记录并发出 `agent_supervision` 事件；`Worker.pump_outbox` 据此入队 `supervision` job；`SupervisionJobHandler` + `AgentSupervisor` 按 owner agent 消费：**有模型网关时产出经校验的提案，无模型时显式记 `model_unavailable`**，均只写 `agent_reviews`，不改测量值/资源/下级事实。看护为**账本/事件驱动，不轮询**（符合 WF-04 Scenario）。
 >
-> `AgentGateway`/`ModelGateway` 的**真实模型实现仍需部署层提供**（仓库只有 `Protocol` 与测试假模型）；未提供时 supervisor 记 `model_unavailable`，不会伪造判断。图对工作的 fanout 仍是**持久 work job**（受 `max_work_concurrency` 限制），不是把任务交给模型。
+> `runtime/agent_bridge.py` 已有应用内 HTTP/RPC provider 接口和持久请求、查询、取消、usage 对账。部署仍须提供实际 provider 配置；没有配置时明确不可用，不假称已调用宿主 dispatch。图的 fanout 使用持久 work job，模型任务也进入 TaskBackend/Worker。
+
+### 生命周期接线（所有节点共用）
+
+E/C、R/G、A/F 与 N00–N10 使用同一最小 ContextPacket、作用域/版本身份与事件监督。S：失败归类、已登记动作、预算预留、原操作对账、后验、恢复计划、候选冻结、可信门禁、晋级 CAS 和安全收尾。M：已启用 scope 内的 investigator、coder、独立 reviewer；仅返回受 schema 限定的提案、编辑与解释。H：缺环境输入、需要新的授权范围、业务口径变更；已有精确授权内不逐步骤重复询问。
+
+`lifecycle rollout` 的 off/actions/scoped/candidate 只缩小既有 policy/权限范围；关闭新工作不关闭原清理和对账。服务装配、实际可用修复动作和后端验证必须分别记录；没有具体产品动作的节点不能凭一个 agent 身份声称自动修复已实现。
 
 ## 2. 每个节点都要有的合同
 
@@ -190,3 +196,6 @@ RP 的版本激活内部图与确定性协议见 [orchestration-design.md](orche
 ## 执行代码与代码契约入口
 
 本节点的执行模块、算法及恢复合同见 [benchmark-design.md](benchmark-design.md)；测试这些代码的独立断言、夹具与工程测试见 [benchmark-contract-design.md](benchmark-contract-design.md)，任务见 [tasks.md](tasks.md) 15–26组。运行时参数缺失只阻塞对应真实用例，不阻止严格合同和算法实现。Kuasar B02.FULL 已补查公共builder路径（BCD-05）；目标部署可用性及实际适配另行验收。
+
+
+2026-10-24 实施接口补充：E1/E2 的只读宿主验收、C2 的镜像/容器/部分修复/ublk、C3 的参数证据分级、N04–N07 动态归属刷新及原操作私有日志接口，见[运行证据与恢复流程](../../../docs/environment-runtime-evidence.md)。这些步骤均为 S；缺声明/观测能力保留明确缺口，未知诊断才使用 M，变更授权沿用已有 H 记录。自动发现不新增 agent 层级，采样线程仍由原 N07 停止/join 看护。

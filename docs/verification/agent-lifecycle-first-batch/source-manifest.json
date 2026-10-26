@@ -1,0 +1,16 @@
+{
+  "base_commit": "2dfe8aee7ebe693685c1b2a990ea6bea2fdd973c",
+  "sha256": {
+    "sandbox_graph/domain/agent_lifecycle.py": "4ecd0cf889f812cf56af9b8df7bd8934aed29ef1e005461ed622b09f83fb7667",
+    "sandbox_graph/graphs/executor.py": "f25960c749f95d82fb6224b5311d1c2dbce5f409d80cfbd6617b38c5a4b1c769",
+    "sandbox_graph/graphs/factory.py": "37e7663276375c98fb1b48330df87d7beb1d3b2f37d58bf0dae761a24e870863",
+    "sandbox_graph/runtime/tasks.py": "3a357cb939dd87df130ecf187e20995e225795eea9c52374c68bff1606f79c8c",
+    "sandbox_graph/runtime/worker.py": "8eb80b1e50363d6bd7a937dc7bc577c9ea11b09ee0c313f2abf1838ce08a12df",
+    "tests/orchestration/conftest.py": "dc8ecb16aab090ccfec93d75417786682bb0777a0a32232e4cc3a2c4a750b57a",
+    "tests/orchestration/unit/test_lifecycle_models.py": "48ee419e89547d5b4e0807832d9e4e3f62299f1377368b5f9f6860d86c3e4083",
+    "tests/orchestration/unit/test_lifecycle_state.py": "29c674de1146c22917ced2f1dc222c5f4014ca13dda2f490b4adf2b4186af1db",
+    "tests/orchestration/unit/test_remediation.py": "2f5ad29549f7196c2df55e333ebd13df70cbc22d678aa252a9b0eac9bb1a5c70",
+    "tests/orchestration/unit/test_remedy_leases.py": "3c695d82453abb328145c31e559db92934ce82e8f4ad3bfc29f83c3c32555109",
+    "tests/orchestration/unit/test_review_supervision.py": "9b175dac6cfdbc387d4df9bcaeec862791a1462a5d244a51dada277e7a7570b6"
+  }
+}

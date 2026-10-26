@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import errno
 import platform
 import shutil
 import stat
@@ -26,6 +27,7 @@ class HostFacts:
     pss_readable: bool
     disk_bytes: int
     virtualization_supported: bool | None = None
+    kvm_open_error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -36,11 +38,13 @@ class RoleCheck:
 
 
 def classify_kvm(*, device_exists: bool, module_loaded: bool, openable: bool,
-                 virtualization_supported: bool | None = None) -> RoleCheck:
+                 virtualization_supported: bool | None = None, open_error: str | None = None) -> RoleCheck:
     if virtualization_supported is False:
         return RoleCheck("missing", "cpu_virtualization_not_supported")
     if openable and device_exists:
         return RoleCheck("satisfied", "kvm_device_openable")
+    if open_error and open_error not in {"EACCES", "EPERM"}:
+        return RoleCheck("unknown", "kvm_open_failed:"+open_error)
     if not module_loaded:
         return RoleCheck("missing", "module_not_loaded_and_device_absent" if not device_exists else "module_not_loaded",
                          remediation="load_kvm_module")
@@ -57,7 +61,8 @@ def assess_role(role: str, facts: HostFacts) -> dict:
         kvm = classify_kvm(device_exists=facts.kvm_device_exists,
                            module_loaded=facts.kvm_module_loaded,
                            openable=facts.kvm_openable,
-                           virtualization_supported=facts.virtualization_supported)
+                           virtualization_supported=facts.virtualization_supported,
+                           open_error=facts.kvm_open_error)
     else:
         kvm = RoleCheck("not_applicable", "role_does_not_launch_virtual_machines")
     checks = {
@@ -84,7 +89,9 @@ def collect_host_facts(*, proc_root: str | Path = "/proc", sys_root: str | Path 
     cpuinfo = (proc / "cpuinfo").read_text(encoding="ascii", errors="replace").lower()
     flags = " ".join(line.partition(":")[2] for line in cpuinfo.splitlines()
                      if line.strip().startswith(("flags", "features")))
-    virtualization_supported = any(flag in f" {flags} " for flag in (" vmx ", " svm "))
+    architecture = platform.machine()
+    virtualization_supported = (any(flag in f" {flags} " for flag in (" vmx ", " svm "))
+        if architecture.lower() in {"x86_64", "amd64", "i386", "i686"} and flags.strip() else None)
     kvm_path = dev / "kvm"
     device_exists = False
     try:
@@ -93,13 +100,14 @@ def collect_host_facts(*, proc_root: str | Path = "/proc", sys_root: str | Path 
         pass
     module_loaded = any((sysfs / "module" / name).exists() for name in ("kvm", "kvm_intel", "kvm_amd"))
     openable = False
+    open_error = None
     if device_exists:
         try:
             fd = os.open(kvm_path, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
             os.close(fd)
             openable = True
-        except PermissionError:
-            pass
+        except OSError as exc:
+            open_error = errno.errorcode.get(exc.errno, "UNKNOWN")
     cgroup_version = "v2" if (proc / "self" / "cgroup").exists() and "0::" in (proc / "self" / "cgroup").read_text(errors="replace") else "v1"
     systemd_available = Path(systemd_root).is_dir()
     runtimes = tuple(name for name in ("containerd", "docker", "podman") if shutil.which(name))
@@ -112,6 +120,6 @@ def collect_host_facts(*, proc_root: str | Path = "/proc", sys_root: str | Path 
         pss_readable = False
     disk_bytes = shutil.disk_usage("/").free
     return HostFacts(max(os.cpu_count() or 0, 0), memory_kib * 1024,
-        platform.machine(), platform.release(), device_exists, module_loaded, openable,
+        architecture, platform.release(), device_exists, module_loaded, openable,
         cgroup_version, systemd_available, runtimes, interfaces, pss_readable, disk_bytes,
-        virtualization_supported)
+        virtualization_supported, open_error)

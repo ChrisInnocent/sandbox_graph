@@ -141,9 +141,8 @@ def run(config,scenario,folder):
 
 
 def load_case(path):
-    import yaml
-    from .contracts import CaseContract
-    return CaseContract.model_validate(json.loads(json.dumps(yaml.safe_load(Path(path).read_text()))))
+    from .casegen import single_case_file
+    return single_case_file(path).case
 
 
 def resolve_or_build(args):
@@ -266,6 +265,7 @@ def main(argv=None):
     p.add_argument('--output',required=True)
     p=sub.add_parser('scenario');p.add_argument('--case',required=True)
     p.add_argument('--output',required=True)
+    p=sub.add_parser('generate');p.add_argument('--case',required=True);p.add_argument('--output',required=True)
     p=sub.add_parser('case')
     p.add_argument('--case',required=True);p.add_argument('--config',required=True)
     p.add_argument('--output',required=True)
@@ -284,12 +284,23 @@ def main(argv=None):
             result=plan_restore(args)
         elif args.action=='scenario':
             result=scenario_selection_command(args)
+        elif args.action=='generate':
+            from .casegen import load_case_file
+            generated=load_case_file(args.case)
+            output=Path(args.output);output.mkdir(parents=True,exist_ok=False)
+            for index,item in enumerate(generated):
+                atomic_json(output/f'case-{index:04}.json',item.case.model_dump(mode='json'))
+                atomic_json(output/f'case-{index:04}.input.json',item.provenance)
+            result={'status':'completed','cases':len(generated),'output':str(output)}
         elif args.action=='case':
             import yaml
             from .contracts import CaseContract
             from .wiring import configured_session
-            case=CaseContract.model_validate_json(json.dumps(yaml.safe_load(Path(args.case).read_text())))
+            from .casegen import single_case_file
+            generated=single_case_file(args.case)
+            case=generated.case
             config=yaml.safe_load(Path(args.config).read_text())
+            config['case_input_provenance']=generated.provenance
             # issue #5：创建类用例声明的终点必须与实际创建的（已审核）同步性一致；
             # 不一致则 blocked（绝不静默规范化成 API_COMPLETE 来“消除”多余的 inspect）。
             from .endpoint import validate_endpoint_declaration

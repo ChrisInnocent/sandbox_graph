@@ -2,7 +2,7 @@
 
 ## Context
 
-2026-10-21，设计草案，implementation_status=planned。本文是 [design.md](design.md) 的实现设计附件，测试设计见 [orchestration-test-design.md](orchestration-test-design.md)。当前没有实现本文描述的包、服务、数据库或测试。路径和接口名均为拟议代码合同。
+2026-10-21 初始设计；2026-10-23 对齐实施状态：D21 生命周期增量 implementation_status=in_progress，完整完成项见 [tasks](tasks.md)，已验证子交付及缺口见 [当前能力对照](../../../docs/orchestration/lifecycle-status.md)。本文是 [design.md](design.md) 的实现设计附件，测试设计见 [orchestration-test-design.md](orchestration-test-design.md)。当前已有部分包、服务及测试；实际范围以 tasks 与实施记录为准。设计中的新增路径和接口仍为拟议合同，不因设计存在视为实现。
 
 需求来源：[工作流规格](specs/evaluation-workflow/spec.md)、[环境规格](specs/environment-readiness/spec.md)、[运行时规格](specs/runtime-evaluation/spec.md)。业务节点以 [node-automation.md](node-automation.md)、[node-workflows.md](node-workflows.md) 和 [test-nodes.md](test-nodes.md) 为准；本文解释如何把这些节点落实为可恢复的程序。
 
@@ -12,13 +12,13 @@
 
 **Goals:** 明确代码模块、状态与数据归属、LangGraph 映射、三级 agent 协议、持久派发、资源互斥、失败恢复、选测与图变更、增量分析及报告收口，达到可以据此拆解实现任务和验证的程度。
 
-**Non-Goals:** 本轮不实现调度器、安装或测量脚本；不重复定义三套产品 API；不确定真实环境和测试规模；不把未澄清的负载、Guest OS 扣除或调优范围变成默认事实。脚本仅设计编排侧调用和恢复协议，其业务算法另行细化。
+**Non-Goals:** 本附件负责编排合同、状态、调用及恢复协议；安装和测量算法由各专项设计负责。不预设真实环境、测试规模或未澄清的 Guest OS 扣除和调优范围。用户已授权按 tasks 实现，实际范围和验证证据分别登记。
 
 ## Decisions
 
 ### D01. 基础实现方案与替代方案
 
-以下是本次提出的工程选择，尚未作为用户已确认决策：
+以下为现有实现采用的工程基线；具体技术项由设计选择，用户已授权进入实施，实际后端验收仍单独记录：
 
 | 项目 | 拟议选择 | 理由与替代方案 |
 |---|---|---|
@@ -611,6 +611,64 @@ N05 执行任何生命周期操作（创建/暂停/恢复/克隆/删除/快照�
 - 与 D11 的关系：轮询是**只读观察**，不触发自动恢复；与 D19 还原扫描一致处理 `gone`。
 
 规格 RT-46，详设 BCD-17，独立测试 BCT-13。离线验收：ORC-076。
+
+### D21. 节点自修复、受限派发与工作流演进
+
+2026-10-23 增量状态，implementation_status=in_progress。42.1–42.4 合同/状态机/动作目录与独立兼容夹具、43.6 真实 thread 租约、44.1 上下文隔离和 44.2–44.3 provider 协议为 locally_verified。共享 work 租约、持久生命周期/预算/派发已有服务核心；RecoveryPlan 编译器和实际图重入已完成限定范围验收（45.2），确定性 work 调度与可选 investigator 诊断已通过限定范围复审。原 ID 现场/provider 安全续办已通过子交付复审；44.5 有证据的规则／诊断选路及策略切换已本地验证；N02完整本地组合45.1已通过复审；多 scope、远端 sampler 接管、coder/reviewer 工具、候选执行与晋级仍待完成，43–45 保持未完整勾选。落实 WF-04/06/07/21/34–36/39；完整模块、接口、状态表、事务、N00–N10 恢复策略及迁移见 [agent-lifecycle-design.md](agent-lifecycle-design.md)，测试门禁见 [agent-lifecycle-test-gates.md](agent-lifecycle-test-gates.md)，实施任务为 [tasks.md](tasks.md) 42–49。现有代码具有 N01/N07/N09 的有限 remedy 路径，不等于本节完整能力已实现。
+
+#### D21.1. 工作节点内部循环
+
+~~~mermaid
+flowchart TD
+    RUN[确定性节点执行] --> CHECK{合同验收}
+    CHECK -->|通过| NEXT[保存事实，继续原图]
+    CHECK -->|失败| SAFE[收尾本 attempt、处置或隔离资源]
+    SAFE --> DIAG[已知规则或节点 agent 诊断]
+    DIAG -->|注册动作| POLICY{范围、预算、处置许可}
+    POLICY -->|允许| ACTION[持久任务执行修复脚本]
+    ACTION --> POST{独立后验}
+    POST -->|通过| RECOVER[编译恢复计划并重验依赖]
+    RECOVER --> RUN
+    POST -->|已知失败且有新方案和预算| DIAG
+    POST -->|未知| RECONCILE[有限对账，不重复提交]
+    RECONCILE -->|确定| DIAG
+    RECONCILE -->|耗尽| BLOCK[blocked，保存恢复入口]
+    DIAG -->|缺能力需改代码/图| CODE[隔离编码 agent 创建候选修订]
+    CODE --> TEST{可信门禁}
+    TEST -->|失败且预算允许| CODE
+    TEST -->|通过| REVIEW[风险审查、授权与版本 worker 就绪]
+    REVIEW -->|满足| NEW[新版本新 run，原版本收尾]
+    REVIEW -->|缺决定或依赖| WAIT[持久等待]
+    WAIT -->|条件满足且预算有效| REVIEW
+    WAIT -->|期限耗尽| BLOCK
+    POLICY -->|无许可或耗尽| BLOCK
+    TEST -->|预算耗尽| BLOCK
+~~~
+
+失败可以迭代；每轮有额度、deadline、无进展规则。成功的最后一次允许验收。未知效果保持隔离，现场动作停止，但可用已封存证据离线诊断和准备候选。等待、blocked、生命周期完成与 execution/data/performance/cleanup 分离；有效性能 fail 不自动重新测量。
+
+#### D21.2. 派发、上下文与恢复
+
+节点 agent 不自动继承宿主 Codex/OpenCode 的 dispatch/team。应用内 provider 和可选宿主 bridge 通过同一持久协议，明确 scope、request_id、lookup、task handle、查询、取消、usage 上界；未提供能力仅阻塞依赖该能力的路径。确定性已知修复不依赖模型。
+
+request_remediation 的调用者提交动作、证据、授权引用与 expected_revision；attempt、owner、generation 和额度由服务从账本计算。去重、fence、work 互斥、预算、order/job/outbox 单事务；模型建议不是许可。工作节点、环境组和主 agent 各自持有范围内证据，不共享私有对话。团队默认只有 supervisor 到 investigator/coder/reviewer 一层，可配置受限 DAG，统一累计任务、并发、时间和 token 预算。
+
+修复成功后由确定性 RecoveryPlan 重验失效依赖，不能按节点编号直接继续。已清理 fixture、断段采样、新指标语义分别处理，不覆盖旧证据。预算按 lifecycle/lineage 累积，不因 context、策略或新 run 重置；并发预留、usage 未知和响应丢失按 ALD-04/05 处理。
+
+#### D21.3. 候选代码与版本发布
+
+编码 agent 可以在隔离候选工作区实际改代码、图和测试，并在失败证据驱动下继续修订。活动源码、原始测量事实、可信门禁基线与授权数据不可写。worktree 不是执行隔离；候选执行需要独立权限、挂载、网络与资源边界。每次 revision 冻结后不可变，测试结果和独立审查绑定该摘要。
+
+| 风险 | 范围 | 晋级条件 |
+|---|---|---|
+| R0 | 不影响运行行为、验收规则的文档/注释/纯测试 | 可信影响判断与适用门禁，可按预授权接受；无执行产物不创建空 run |
+| R1 | 命中 allowlist 的非行为性诊断/可观测改动 | 相关完整门禁、影响审查、预授权 |
+| R2 | 运行逻辑、节点脚本、状态/路由等改变 | 独立 review、完整必需测试和策略授权 |
+| R3 | 口径、权限、外部副作用、清理、范围、证据兼容性或未知影响 | 必要人工新合同/范围授权及全部必需门禁；已有授权确实覆盖则复用 |
+
+测试/CI/依赖/门禁文件按真实影响分类，不能仅凭文件名降为 R0。候选不能自选跳过失败测试或自签报告。G0–G6 证明由可信 runner 产生，必需 skip、零收集和缺环境都不能算 pass。
+
+发布先确认新 bundle 的 worker 就绪，再事务内重验 candidate/gates/review/authorization/有效期/版本 CAS，所有激活入口一致；旧 run 原版本继续或 drain，新执行版本用新 run/thread。激活后检查另记，不形成激活前循环依赖。失败候选保留，不影响无关 work；回退也不覆盖历史运行。
 
 ## Risks / Trade-offs
 

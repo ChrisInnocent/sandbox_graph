@@ -1,0 +1,8 @@
+...........................                                              [100%]
+============================= slowest 5 durations ==============================
+34.80s call     tests/benchmark/integration/test_five_stage_worker.py::test_two_groups_flow_through_worker_real_sessions_and_partial_archive
+21.25s call     tests/benchmark/integration/test_large_evidence.py::test_btc052_large_raw_is_archived_but_node_outputs_stay_bounded_and_model_free
+1.23s call     tests/benchmark/integration/test_create_metrics_orchestration.py::test_mocked_work_graph_collects_latency_throughput_cpu_memory
+1.14s call     tests/benchmark/integration/test_analysis_graph.py::test_frozen_cases_flow_through_analysis_excel_report_and_archive[False]
+0.88s call     tests/benchmark/integration/test_work_graph_session.py::test_real_work_graph_runs_receipts_analysis_and_replay
+27 passed in 70.09s (0:01:10)

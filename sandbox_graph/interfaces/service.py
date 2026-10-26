@@ -13,9 +13,10 @@ class RunService:
         plan=self.compiler.compile(selection,authorized_groups=authorized_groups,evidence=evidence,graph_ref=graph_ref,contract_ref=contract_ref)
         with self.repository.transaction() as tx: tx.put('plans',plan.hash,plan.model_dump(mode='json'),immutable=True)
         return plan
-    def start(self,request_id,plan_hash,*,authorized_groups,evidence=None,execution_seconds=3600):
+    def start(self,request_id,plan_hash,*,authorized_groups,evidence=None,execution_seconds=3600,deployment_binding=None):
         positive_duration(execution_seconds)
         inputs={'plan_hash':plan_hash,'auth':sorted(authorized_groups),'evidence':evidence or {},'execution_seconds':execution_seconds}
+        if deployment_binding is not None:inputs['deployment_binding']=deployment_binding
         digest=canonical_hash(inputs)
         with self.repository.transaction() as tx:
             old=tx.get('commands',request_id)
@@ -33,16 +34,28 @@ class RunService:
                 row=tx.get('runs',source) if source else None
                 if not row: raise Conflict('stage-only start requires an exact source_run_id')
                 run=RunRecord.model_validate(row['body'])
+                if deployment_binding is not None:
+                    binding=tx.get('evaluation_deployments',run.run_id)
+                    if not binding or any(binding['body'].get(k)!=v for k,v in deployment_binding.items()):
+                        raise Conflict('stage-only deployment differs from source run')
                 payload=self._stage_payload(tx,row['body'],plan.stage,evidence or {})
                 frozen=tx.get('analysis_inputs',payload['analysis_input_ref'])['body']
                 if set(frozen.get('deliveries',{}))-authorized_groups: raise PermissionError('analysis source exceeds authorization')
                 if plan.graph_ref!=run.graph_ref: raise Conflict('stage-only source graph version mismatch')
-                TaskBackend.enqueue_in(tx,JobSpec(job_id=str(uuid4()),job_kind=plan.stage,scope_ref=run.run_id,thread_id=f'{run.run_id}:{plan.stage}:{request_id}',activation_id=str(uuid4()),dedupe_key=f'stage-only:{request_id}',due_at=tx.now,deadline=tx.now+execution_seconds,run_id=run.run_id,dispatch_generation=run.dispatch_generation,payload=payload|{'plan_ref':run.active_plan_ref,'graph_ref':run.graph_ref}))
+                activation_id=str(uuid4())
+                if deployment_binding is not None:
+                    tx.put('evaluation_stage_deadlines',activation_id,{'run_id':run.run_id,'deadline':tx.now+execution_seconds},immutable=True)
+                TaskBackend.enqueue_in(tx,JobSpec(job_id=str(uuid4()),job_kind=plan.stage,scope_ref=run.run_id,thread_id=f'{run.run_id}:{plan.stage}:{request_id}',activation_id=activation_id,dedupe_key=f'stage-only:{request_id}',due_at=tx.now,deadline=tx.now+execution_seconds,run_id=run.run_id,dispatch_generation=run.dispatch_generation,payload=payload|{'plan_ref':run.active_plan_ref,'graph_ref':run.graph_ref}))
                 tx.put('commands',request_id,{'hash':digest,'result':run.model_dump(mode='json')},immutable=True)
                 return run
             identity=str(uuid4())
             run=RunRecord(run_id=identity,root_thread_id=f'run:{identity}',graph_ref=plan.graph_ref,contract_ref=plan.contract_ref,active_plan_ref=plan.hash,auth_ref=plan.auth_hash,lineage_id=identity)
             tx.put('runs',identity,run.model_dump(mode='json'),immutable=True)
+            if deployment_binding is not None:
+                if (set(deployment_binding)!={'runtime_hash','graph_ref'} or deployment_binding['graph_ref']!=plan.graph_ref
+                        or not __import__('re').fullmatch('[a-f0-9]{64}',deployment_binding['runtime_hash'])):
+                    raise ValueError('frozen deployment graph/hash required')
+                tx.put('evaluation_deployments',identity,deployment_binding|{'deadline':tx.now+execution_seconds},immutable=True)
             tx.put('dispatch_gates',identity,{'open':True,'generation':1},immutable=True)
             tx.put('closure_revisions',identity,{'plan_ref':plan.hash,'revision':0},immutable=True)
             TaskBackend.enqueue_in(tx,JobSpec(job_id=str(uuid4()),job_kind=f'graph:{plan.stage}',scope_ref=identity,thread_id=run.root_thread_id,activation_id=str(uuid4()),dedupe_key=f'run:{identity}:start',due_at=tx.now,deadline=tx.now+execution_seconds,run_id=identity,payload={'plan_ref':plan.hash,'graph_ref':plan.graph_ref}))
@@ -76,6 +89,10 @@ class RunService:
             if kind=='cancel':
                 gate=tx.get('dispatch_gates',run_id)
                 tx.put('dispatch_gates',run_id,gate['body']|{'open':False,'policy':'cancel'})
+                from ..services.lifecycle_stop import LifecycleStopService
+                LifecycleStopService.request_in(tx,request_id='cancel:' + request_id,
+                    run_ref=run_id,plan_ref=body['active_plan_ref'],graph_ref=body['graph_ref'],
+                    reason=payload['reason'],policy='cancel')
             result={'request_id':request_id,'run_id':run_id,'kind':kind,'status':'queued'}
             TaskBackend.enqueue_in(tx,JobSpec(job_id=str(uuid4()),job_kind='cleanup' if kind=='cancel' else kind,scope_ref=run_id,thread_id=f'cancel:{run_id}:{request_id}' if kind=='cancel' else f'{run_id}:{kind}:{request_id}',activation_id=request_id,dedupe_key=f'command:{request_id}',due_at=tx.now,deadline=tx.now+3600,run_id=run_id,dispatch_generation=body['dispatch_generation'],payload=payload|{'plan_ref':body['active_plan_ref'],'graph_ref':body['graph_ref']}))
             tx.put('commands',request_id,{'hash':digest,'result':result},immutable=True)

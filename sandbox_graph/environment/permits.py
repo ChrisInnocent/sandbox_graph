@@ -36,7 +36,7 @@ class ExecutionGrantIssuer:
 
     def issue(self, *, operation_id: str, step_id: str, run_id: str, thread_id: str,
               owner_epoch: int, machine_id: str, resource_generations: Mapping[str, int],
-              action: str, input_data: dict, ttl_seconds: float = 30) -> ExecutionGrant:
+              action: str, input_data: dict, ttl_seconds: float = 30, nonce: str | None = None) -> ExecutionGrant:
         if ttl_seconds <= 0 or ttl_seconds > self.max_ttl_seconds:
             raise ValueError("execution grant TTL exceeds issuer limit")
         now = self.clock()
@@ -45,7 +45,7 @@ class ExecutionGrantIssuer:
             "step_id": step_id, "input_hash": canonical_hash({"action": action, "input": input_data}),
             "machine_id": machine_id, "resource_generations": dict(resource_generations),
             "run_id": run_id, "thread_id": thread_id, "owner_epoch": owner_epoch,
-            "nonce": secrets.token_urlsafe(32), "not_before": now,
+            "nonce": nonce or secrets.token_urlsafe(32), "not_before": now,
             "not_after": now + ttl_seconds,
             "max_clock_skew_seconds": self.max_clock_skew_seconds, "signature": "0" * 64,
         }

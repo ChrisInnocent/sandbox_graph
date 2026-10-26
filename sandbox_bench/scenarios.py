@@ -18,6 +18,7 @@ from typing import Any, Awaitable, Callable
 from .completion import (Acceptance, CompletionObserver, CompletionResult, CompletionSpec,
                          StateObservation, TerminalObservation)
 from .contracts import CaseContract
+from .creation_hold import base_method
 from .load import OperationResult
 from .transport import TransportError
 
@@ -187,7 +188,7 @@ class ScenarioExecutor:
 
     def preflight(self, index: int = 0) -> None:
         """No I/O: runner can call this before consuming a durable request slot."""
-        method = self.case.method_id
+        method = base_method(self.case.method_id)
         if self.case.completion.endpoint == 'SERVER_TERMINAL' and self.terminal_provider is None:
             raise ScenarioBlocked('correlated_terminal_provider_required')
         if method.startswith(('B01.', 'B02.')) and self.case.source.artifact_kind and self.case.source.launch_path:
@@ -306,8 +307,8 @@ class ScenarioExecutor:
             self.preflight(index)
         except ScenarioBlocked as error:
             return OperationResult('unsent', reason=str(error), value={'execution': 'blocked'})
-        method, began = self.case.method_id, self.clock()
-        value: dict = {'method_id': method, 'request_index': index}
+        method, began = base_method(self.case.method_id), self.clock()
+        value: dict = {'method_id': self.case.method_id, 'request_index': index}
         try:
             adapter = self.adapter
             if method.startswith(('B01.', 'B02.', 'B10.FIXED_REQUESTS.')):

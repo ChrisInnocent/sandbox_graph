@@ -430,6 +430,88 @@ inventory 区分管理进程、计算节点管理进程、共享依赖、实际 
 
 ## Apply 状态说明（2026-10-21）
 
-本设计已进入实施阶段。公共环境底层已部分实现，当前任务进度为 **22/65**，以同目录 [`tasks.md`](tasks.md) 勾选为准。已完成项覆盖声明/输入合同、SSH 与主机探测、凭据/鉴权、配置文件事务、修复规划、有限参数、远端 journal、OperationService gateway、注册式动作等底层范围。
+本设计已进入实施阶段，当前进度以同目录 [`tasks.md`](tasks.md) 勾选为准。已完成项覆盖声明/输入合同、SSH 与主机探测、凭据/鉴权、配置文件事务、修复规划、有限参数、远端 journal、OperationService gateway、注册式动作等底层范围。
 
-D06 的三产品发现、安装、角色注册、参数生效验证和密钥部署方案仍是待实现设计；环境 LangGraph/CLI 接线与 10.x 真实验收同样未完成。公共合同和 inventory 代码不能被解释为 CubeSandbox、Kuasar、AgentENV 的检查或配置 adapter 已交付。每个模块只有对应实现和任务要求的测试完成后才标记完成，真实部署验收单独记录。
+D06 已有角色发现、锁定 recipe、配置/鉴权资产和复检代码，环境 LangGraph/CLI 已接线；未完成项按 tasks 和当前能力账本逐项追踪。真实部署验收仍未完成，不能以公共合同、图运行或单元测试通过替代三产品现场验收。
+
+### D14. 2026-10-24 环境图实际接线
+
+`workflow.py` 冻结 `EnvironmentScopePlan`，`handlers.py` 实现 E1/E2/C1/C2/C3/T8/GE，`remote_runner.py` 将产品 recipe 展开到逐原语的 `OperationService`，`handshake.py` 和 `transport.py::request_granted` 实现同一 SSH 会话的锁/nonce/grant 协议。新环境运行使用专用 `job_kind=environment`，按 `environment:1` 选择工厂；保留既有 group/测试图定义，环境 worker 限定领取此类任务。该专用入口取代 D12 中“环境作业复用普通 group handler”的初稿描述，避免进入依赖 Case 的旧 `_plan()`。
+
+环境步骤的 token 由取得真实租约后的 handler factory 注入专用 runner，不从 Operation 的可填写字段读取。授权、租约、资源 generation 和 grant 必须在步骤提交时重验；只查询原 journal 不生成新 nonce，不消费安装额度。C3 的新修复轮次有独立 plan hash，并受 scope 的累计步骤及 revision 限制。
+
+```mermaid
+flowchart TD
+  E1["E1 载入冻结范围、版本、批准的计划"] --> E2["E2 SSH/宿主/产品只读探测并提交证据"]
+  E2 -->|check-only 或已满足| T8["T8 核验原操作与归属资源"]
+  E2 -->|需要准备| C1["C1 规则映射、授权与预算检查"]
+  C1 --> C2["C2 逐步骤：预约宿主 → 原 intent → nonce/grant → journal"]
+  C2 -->|确定完成| C3["C3 新连接独立复检"]
+  C2 -->|未知| T8
+  C2 -->|宿主占用| W["持久 wait；资源事件唤醒新 activation"]
+  W --> T8
+  C3 -->|仍有确定差异且有预算| REV["有限新 repair revision，调用 C1/C2 后复检"]
+  REV --> C3
+  C3 -->|满足或预算耗尽| T8
+  T8 --> GE["GE 发布完整或带缺口的不可变报告"]
+```
+
+模型不参与 E1—GE 中的数值、执行状态或 ready 判定。模型可以诊断未登记问题并提出候选方案；新的可执行动作需进入注册目录和门禁。用户提供连接/制品/权限、确认有限放宽范围及凭据轮换。默认 probe 不能独立证明配置生效/注册/鉴权/canary 时必须 blocked；后续产品验证器的实现状态单列，不能以图能运行替代它们完成。
+
+实现证据及未完成接线见 [实施增量](../../../docs/verification/agent-lifecycle-runtime/implementation-increment-20261024.md)。
+
+### D16. 管理角色证明与 Kuasar 集群导入实施接口
+
+- `products/kuasar.py::cluster_group_recipe` 接收完整已观察 file source、目标 group、私有密钥对和 placer 配置 before digest。先拒绝跨 source 重名、既有密钥/记录冲突；保留其他 source 和本 source 既有记录。公开计划只带私有 asset 路径/摘要。
+- `products/group_generation.py::publish` 在 0700 临时目录写 0600 JSON、fsync 后发布摘要命名的不可变目录。已存在目录必须逐文件一致，不能覆盖。`activate` 在配置 CAS 前复核原 source 和新 generation，再调用 `replace_file` 产生可补偿 receipt。所有 source 写入者须遵守宿主冲突域，不声称跨主机文件系统事务。
+- 后续固定步骤是 `cluster-ctl config placer --config <path>` 和 `systemctl restart cluster-placer.service`；没有虚构 group 管理命令。目录未激活或校验失败时保留原请求和差异，按 receipt 恢复/补偿，不盲重放。最终仍须 router/节点保护对象正反例、当前服务证明和 cleanup，不能据文件成功签发 ready。
+- `scripts/environment/prepare_kuasar_groups.py` 生成 recipe 和 `kuasar_cluster.credential`；APISecret 只存 SecretStore，版本与 ManifestKey 绑定，冲突拒绝。既有 `api_secret_env` 显式兼容，两种来源互斥。
+- `CanaryRequest.management_dependencies` 冻结非 API 管理节点和 boot，必须同时声明真实 control route、计算节点及宿主预约。`RemoteEnvironmentProbe.management_dependency` 重新检查身份/boot、实际产品服务和启动配置。报告保留 group_dependency 层级，不声称单个管理进程处理了该请求。ProductVerification 和 AcceptanceService 消费同一功能/清理证据，boot 变化或缺服务证明拒绝。
+- RuntimeRegistrationProbe 不把纯管理节点当计算节点查询；已知参数按源码规则的角色适用性输出 not_applicable，真正适用但无运行时值仍为 unknown。
+
+门禁代码为 `test_kuasar_group_deployment.py`、`test_canary.py`、`test_registration.py`、`test_server_auth.py`，覆盖实际本地 CAS/权限、前后漂移、重复请求、密钥版本、管理 boot 变化、无探针和失败清理。真实 systemd/placer 导入、节点下发及多机验收仍由 live harness 验证。
+
+### D17. 部分安装修复的运行中服务依赖
+
+Kuasar 的 partial recipe 必须从确认缺失的原语沿依赖闭包补齐后续动作。共享 `node-ctl` 修复影响已声明的 conductor/proxy；共享 `cluster-ctl` 影响已声明的 registry/placer/router。单角色配置和 unit 只影响该角色。配置校验必须重新执行，unit 补回后必须 daemon-reload；运行过的服务执行注册的 restart，明确 stopped/missing 的服务仍执行 start。顺序保持原 recipe 的先后关系，每个 step 只出现一次。
+
+确定性代码负责闭包、顺序和 argv，模型不得补命令。新 recipe 摘要仍通过原授权、宿主预约、逐步 journal 和 C3 独立复检。原观察含 unknown/mismatch 时不生成新修复。AgentENV 的 setup/容器重建和 Cube 一键安装不据此视为可安全重放，需要各自的动作合同。
+
+门禁：`test_product_rules.py` 使用共享二进制、单角色配置、unit 缺失、全部满足和单服务停止五类输入，断言校验/重启依赖、reload 顺序及无关角色不受影响。它证明计划语义，不代替真实 systemd 生效验收。
+
+### D18. 初始 SSH bootstrap 与离线资产
+
+`bootstrap.py` 构造私有 bundle（manifest + 按 SHA-256 保存的 blobs），`bootstrap_remote.py` 为仅依赖 Python 3.11–3.14 标准库的固定接收器。SSH 仍严格校验 known_hosts，远端命令只含仓库固定代码；机器身份、路径、请求 ID、摘要及秘密走有界 stdin。没有 helper 的节点无需先调用 helper 才能安装 helper。
+
+bootstrap 属于部署管理员使用初始账户的显式准备入口，不在 check 中自动运行，不代替 PG ExecutionGrant，不执行产品 recipe。目标必须预先提供 Python/venv/ensurepip；没有则报告失败而不联网安装。bundle 包含全部固定 wheel、grant key、recipe catalog 及资产，pip 使用 isolated/no-index/no-deps，随后 pip check 和真实 helper 自检；错误不回退在线源。大资产分块传输，禁止 tar 解包、用户命令和路径穿越。
+
+接收器验证机器身份、入口 CAS 和私有目录后，取得 bootstrap 锁及现有宿主执行锁。原 request ID 绑定整个输入摘要，最多三次独立构建尝试；子进程继承锁，中断后仍运行则拒绝第二次构建。失败尝试及私有有界日志保留，新尝试不复用未知半成品。完整 ready 目录校验后原子切换 `root/bin/sandbox-graph-remote-agent`，旧目录不删除。切换与最终 receipt 之间崩溃时，从 ready 记录及入口内容恢复；同 ID 改输入、旧入口 CAS、制品漂移均拒绝。既有 grant key 不允许通过版本升级隐式轮换。
+
+运行配置 `helper_paths` 将 SSH 地址绑定到 bootstrap 返回的绝对入口，普通探测和 grant 通道都使用相同入口。私有资产固定放在 `root/objects/<sha256>`，供预渲染 recipe 引用；投递本身不等于安装或 Docker load。输出只含版本/入口/资产路径和步骤状态，不输出秘密或安装 stderr。
+
+EAT-36 门禁：真实本地离线 wheel 安装与 helper 进程自检、固定 SSH argv/stdin 传输、重复请求复用、错机器/坏摘要/密钥冲突/入口 CAS 拒绝、失败与中断重入、私有日志上限、helper_paths 接入。测试使用明确标记的合成 wheel；真实目标 SSH 和三产品安装仍属于 EAT-30—33。
+
+## D18. 动态归属与原操作恢复补齐
+
+实现接口和节点 Mermaid 见 [运行证据与恢复说明](../../../docs/environment-runtime-evidence.md)。E2/C3 调用固定产品/ublk 探针；N04–N07 可配置 `collector_procfs.discovery`，在原 sampler executor 中完成 scope/placement→源码归属→PID 复核→递增快照→采样。Cube shim/VMM 同进程合并计费，Kuasar 父链逐进程计费，AgentENV 使用只读 MMDS instanceID；generation 明示为观察到的进程 incarnation。脚本决定全部边界，模型不猜 PID/ID/缺失样本。
+
+C2 的 AgentENV/Cube 部分修复按输入依赖传播到校验、reload、restart。控制容器属于独立 `owned-container` primitive，原 ID、受管标签及 image ID 均必须匹配；离线镜像由 `docker-image` primitive 校验 archive sha 和内容身份后加载。两者复用原 journal 子操作与宿主锁。变更后无法确认时保持 unknown。
+
+ublk primitive 将持久配置与当前模块值分开。只在已确认未加载、modinfo 声明参数支持时加载并读 sysfs；当前模块不符要求独立维护，禁止强卸载。在服务器角色直接核验 `host_attributes.ublks_max`。其他未具备直接运行值探针的参数保留 unavailable，不用静态配置替代。
+
+私有日志导出经原 operation/input hash/stream/sha 绑定，无任意路径参数；原 journal 所有者通过既有 SSH 读取完整终态流。64KiB 分块、8MiB 总额、0600、no-clobber 与最终摘要检查，内容不自动进入公开报告/模型上下文。确定性工作全部脚本化；模型只解释失败来源，尚未授权的新维护范围由用户确定。
+
+### EAT-37 门禁
+
+- `test_dynamic_inventory.py`、`test_runtime_discovery_wiring.py`：三产品路径/进程证据、PID 复用/双归属/MMDS deadline、自动版本、work/boot/placement 拒绝。
+- `test_container_action.py`、`test_product_rules.py`、`test_ublk.py`：部分依赖闭包、原 ID 替换、镜像无 pull、变更后未知、模块在位不卸载及远端当前值。
+- `test_log_export.py`、`test_evaluation_deployment.py`：原操作身份/权限/摘要/大小、输出冲突、helper 路径接线。现场验收仍使用 EAT-30–36，不把合成 proc/受控 Docker 边界计为真机。
+
+### D19. 宿主原语验收和产品真实组件修正
+
+EAT-30 增加独立只读 `testing/host_acceptance.py` 与 CLI，冻结 SSH/machine/role/helper/timeout，身份与 boot 前后夹住宿主事实，控制端重算前置条件并保留 0600 原始观察。此证据不证明 guest 创建成功。ARM CPU flags 未知不套用 x86 缺虚拟化结论；非权限的 KVM 打开失败返回 unknown，避免错误修复。
+
+Cube compute 的 VMM 与 shim 同进程，不要求不存在的独立 CH 制品。one-click 依赖失效传播到安装步骤；完整安装不是可盲重放的原语，返回原动作对账，不产出空修复成功。定向用例位于 test_product_probe/test_product_rules/test_host_rules/test_host_acceptance。
+
+
+D19 鉴权补充：group 准备脚本接受可选独立 api_secret_ref，与 manifest_key_ref 同 scope/版本；使用私有解析与 inline generation 保持上游节点兼容，省略时派生，不外泄 stdout。对应先红后绿测试覆盖独立密钥、版本冲突、重入与秘密不进入 manifest 文本。上游直接 ref 下发缺能力不伪报成功。

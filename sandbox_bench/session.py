@@ -11,6 +11,7 @@ import hashlib
 import json
 from pathlib import Path
 import time
+import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
@@ -20,6 +21,7 @@ from .journal import FileJournal
 from .load import LoadEngine, LoadSchedule, OperationResult
 from .runner import atomic_json, digest, environment_identity, redact
 from .transport import Session
+from .sampler_lifecycle import process_identity
 from .measure import error_record, CREATE_CALIBER_ONE_OFF, CREATE_CALIBER_REUSE
 
 
@@ -35,8 +37,11 @@ def _http_session(config):
 
 
 class BenchSession:
-    def __init__(self,case:CaseContract,config,folder,*,scenario=None,sampler=None,steady_check=None,density_controller=None,scenario_options=None,clock_domain=None):
+    def __init__(self,case:CaseContract,config,folder,*,scenario=None,sampler=None,steady_check=None,density_controller=None,scenario_options=None,clock_domain=None,sched_observer=None):
         self.case=case;self.config=dict(config);self.folder=Path(folder)
+        if self.config.get('case_input_provenance') is not None:
+            from .casegen import verify_provenance
+            verify_provenance(case,self.config['case_input_provenance'],allow_work_binding=True)
         self.folder.mkdir(parents=True,exist_ok=True)
         self.environment=environment_identity(config)
         self.process_epoch=uuid.uuid4().hex
@@ -55,19 +60,33 @@ class BenchSession:
                 atomic_json(path,identity);atomic_json(self.folder/'case.json',case.model_dump(mode='json'))
         self.journal=FileJournal(self.folder/'ledger',case.work_id,
                                 child_budget=case.load.requests,parent_budget=case.load.requests//(case.clone_count or 1))
-        self.adapter=Adapter(config, session=_http_session(config))
+        private_config=dict(config)
+        credentials=private_config.setdefault('instance_credentials',{'path':str((self.folder/'private-instances').absolute()),
+            'scope':case.work_id,'generation':1})
+        if credentials.get('scope')!=case.work_id:
+            raise PermissionError('benchmark instance credentials belong to another work')
+        self.adapter=Adapter(private_config, session=_http_session(config))
         if scenario is None:
             from .scenarios import ScenarioExecutor
             scenario=ScenarioExecutor(case,self.adapter,on_owned=self._owned,on_progress=self._build_event,
                 stage_journal=self._stage_event,process_epoch=self.process_epoch,**(scenario_options or {}))
         self.scenario=scenario;self.sampler=sampler;self.steady_check=steady_check
+        self.sched_observer=sched_observer
+        self._sched_result=None
         self.density_controller=density_controller
         self.source_lifecycle=None
         if density_controller is not None and (density_controller.case.digest()!=case.digest()
                 or density_controller.clock is not time.monotonic):
             raise ValueError('density controller must bind the same case and host monotonic observation clock')
         self._sample_task=None;self._sample_stop=asyncio.Event()
+        self._capture_futures=[];self._stop_receipt=None
+        self._capture_submitted=0;self._capture_completed=0
+        self._capture_worker_id=None;self._close_worker_id=None
+        self._sampler_identity=process_identity()
+        self._loop_identity=uuid.uuid4().hex
+        self._lifecycle_artifacts={}
         self._sampler_closed=False;self._sampler_close_future=None
+        self._sampler_shutdown_future=None
         self._sampler_pool=ThreadPoolExecutor(max_workers=1,thread_name_prefix='sandbox-observer') if sampler else None
 
     def _load_journal(self):
@@ -349,7 +368,7 @@ class BenchSession:
     async def _sample_loop(self):
         while not self._sample_stop.is_set():
             try:
-                await asyncio.get_running_loop().run_in_executor(self._sampler_pool,self._capture_sample)
+                await asyncio.shield(self._submit_capture())
             except Exception as exc:
                 self.journal.audit('resource_gap',**error_record(exc))
             try:await asyncio.wait_for(self._sample_stop.wait(),self.case.resources.interval_s)
@@ -364,27 +383,88 @@ class BenchSession:
         return True
 
     def _capture_sample(self):
+        self._capture_worker_id=threading.get_native_id()
         sample=self.sampler.sample_once()
         result=self.sampler.reconcile(self._resource_sink)
         if result['status']!='reconciled':raise OSError('sampler sink disconnected')
         return sample
 
+    def _submit_capture(self):
+        # Keep the concurrent future: cancelling an asyncio wrapper does not stop
+        # its worker thread and must never erase an in-flight capture.
+        completed=[f for f in self._capture_futures if f.done() and not f.cancelled()]
+        self._capture_completed+=len(completed)
+        self._capture_futures=[f for f in self._capture_futures if f not in completed]
+        future=self._sampler_pool.submit(self._capture_sample)
+        self._capture_submitted+=1
+        self._capture_futures.append(future)
+        return asyncio.wrap_future(future)
+
+    def _sampler_receipt(self,state):
+        samples={p.name:hashlib.sha256(p.read_bytes()).hexdigest()
+                 for p in (self.folder/'resource_samples').glob('*.json')}
+        state_record=self.journal.state()
+        interrupted=(any(event['kind'] in {'resource_gap','observation_baseline_unknown'}
+                         for event in state_record['events'])
+            or any(key.split(':',1)[0]=='N04' and row['result'].get('status')!='completed'
+                   for key,row in state_record['receipts'].items()))
+        receipt={'contract':'bench-sampler.v1','producer':'bench-session','producer_version':'1',
+            'state':state,'runtime_kind':'inprocess_threadpool','session_id':self.process_epoch,
+            'case_hash':self.case.digest(),'config_hash':digest(self.config),
+            'work_id':self.case.work_id,'group_id':self.case.group_id,
+            'process_identity':self._sampler_identity,'clock_epoch':self.clock_domain,
+            'loop_id':self._loop_identity,'capture_worker_id':self._capture_worker_id,
+            'close_worker_id':self._close_worker_id,
+            'loop_exit':('running' if state=='running' else 'cancelled' if self._sample_task.cancelled() else 'completed')
+                if self._sample_task else 'not_started',
+            'executor_exit':'joined' if self._sampler_closed else 'running' if self._sampler_pool else 'not_started',
+            'capture_submitted':self._capture_submitted,
+            'capture_completed':self._capture_completed+sum(f.done() and not f.cancelled() for f in self._capture_futures),
+            'close_exit':'completed' if self._sampler_closed else 'not_started',
+            'samples':samples,'samples_sha256':digest(samples),
+            'interrupted':interrupted,
+            'has_gaps':interrupted or any(json.loads(p.read_text()).get('kind')=='sample_gap'
+                           for p in (self.folder/'resource_samples').glob('*.json'))}
+        ref='sampler-'+digest(receipt)+'.json'
+        atomic_json(self.folder/'sampler_lifecycle'/ref,receipt)
+        # Only this live producer can attest a local artifact. After a crash,
+        # an unconsumed file alone cannot prove the original task has exited.
+        self._lifecycle_artifacts[ref]=receipt
+        return receipt
+
     async def _N04(self):
         if self.case.resources is None:return {'status':'completed','observation':'not_requested'}
         if self.sampler is None:return {'status':'blocked','reason':'sampler_required'}
-        # Persist handle before sampling; after a process restart this interval is interrupted.
-        with self.journal._transaction() as state:state['observation_pending']=True
+        if (self._sample_stop.is_set() or self._capture_submitted
+                or not self._sampler_owner(claim=True)):
+            return {'status':'unknown','reason':'original_observation_requires_reconciliation'}
+        # Persist exact owner before submitting any capture.
+        with self.journal._transaction() as state:
+            state['observation_pending']=True
+            state['sampler_owner']={'session_id':self.process_epoch,'process_identity':self._sampler_identity}
+
         self.journal.audit('observation_started',process_epoch=self.process_epoch)
-        baseline=asyncio.get_running_loop().run_in_executor(self._sampler_pool,self._capture_sample)
+        if self.sched_observer:
+            self._sched_result=await self.sched_observer.start()
+            atomic_json(self.folder/'sched.json',self._sched_result)
+        self._sampler_receipt('running')
+        baseline=self._submit_capture()
         try:sample=await asyncio.wait_for(asyncio.shield(baseline),self.case.resources.max_wait_s)
         except TimeoutError:
             self.journal.audit('observation_baseline_unknown',process_epoch=self.process_epoch)
             return {'status':'unknown','reason':'baseline_sample_deadline','observation_pending':True}
         self.journal.audit('baseline_sample',sample_id=sample['sample_id'])
-        self._sample_task=asyncio.create_task(self._sample_loop())
-        return {'status':'completed','observation_handle':self.process_epoch}
+        self._sample_task=asyncio.create_task(self._sample_loop(),name=self._loop_identity)
+        return {'status':'completed','observation_handle':self.process_epoch,
+                'sampler_receipt':self._sampler_receipt('running')}
 
     async def _N05(self):
+        if self.sched_observer:self.sched_observer.begin('create')
+        try:return await self._N05_load()
+        finally:
+            if self.sched_observer:self.sched_observer.end('create')
+
+    async def _N05_load(self):
         if self.case.resources is not None and (self._sample_task is None or self._sample_task.done()):
             return {'status':'blocked','reason':'active_observation_required_before_load'}
         if self.journal.state()['operations']:
@@ -434,48 +514,131 @@ class BenchSession:
                 'unresolved_external':report.unresolved_external,'artifact_ref':'load.json'}
 
     async def _N06(self):
+        if self.sched_observer:self.sched_observer.begin('steady')
+        try:return await self._N06_steady()
+        finally:
+            if self.sched_observer:self.sched_observer.end('steady')
+
+    async def _N06_steady(self):
         if self.case.resources is None:return {'status':'completed','steady':'not_requested'}
         if self.steady_check is None:return {'status':'blocked','reason':'steady_contract_adapter_required'}
+        from .creation_hold import HOLD_METHODS,hold_created
+        if self.case.method_id in HOLD_METHODS:
+            async def inspect(handle,timeout):
+                return await asyncio.to_thread(self.adapter.inspect,handle,timeout)
+            async def steady():
+                return await self.steady_check(self.sampler,self.case.resources)
+            ids=[r['resource_id'] for r in self.journal.owned(self.environment) if r['kind']=='sandbox']
+            result=await hold_created(self.case,ids,inspect=inspect,steady=steady,
+                samples=lambda:[json.loads(p.read_text()) for p in (self.folder/'resource_samples').glob('*.json')],
+                clock_domain=self.clock_domain)
+            atomic_json(self.folder/'hold.json',result)
+            if result.get('steady'): atomic_json(self.folder/'steady.json',{'steady':result['steady']})
+            return result
         result=await asyncio.wait_for(self.steady_check(self.sampler,self.case.resources),self.case.resources.max_wait_s)
         atomic_json(self.folder/'steady.json',result)
         return result
 
+    def _sampler_owner(self, *, claim=False):
+        identity={'session_id':self.process_epoch,'process_identity':self._sampler_identity}
+        with self.journal._transaction() as state:
+            owner=state.get('sampler_owner')
+            if owner is None and claim:
+                state['sampler_owner']=identity
+                owner=identity
+        return owner==identity and process_identity()==self._sampler_identity
+
+    def sampler_stop_status(self):
+        """Observe already submitted work; never start close, join or a new sampler."""
+        if not self._sampler_owner():
+            return {'status':'unknown','reason':'original_sampler_owner_unavailable'}
+        if self._stop_receipt is not None:
+            return {'status':'completed','sampler_receipt':self._stop_receipt}
+        if self.sched_observer and (self._sched_result or {}).get('status') not in ('completed','unavailable','not_started'):
+            return {'status':'unknown','reason':'sched_stop_unconfirmed'}
+        if self._sample_task is not None and not self._sample_task.done():
+            return {'status':'unknown','reason':'sampler_loop_exit_unconfirmed'}
+        if any(f.cancelled() or not f.done() for f in self._capture_futures):
+            return {'status':'unknown','reason':'sampler_capture_exit_unconfirmed'}
+        closing=self._sampler_close_future
+        joined=self._sampler_shutdown_future
+        if closing is None or not closing.done() or closing.cancelled():
+            return {'status':'unknown','reason':'sampler_close_exit_unconfirmed'}
+        if closing.exception() is not None:
+            return {'status':'unknown','reason':'sampler_close_failed'}
+        reconciliation=closing.result()
+        if reconciliation.get('status')!='reconciled' or reconciliation.get('pending',0):
+            return {'status':'unknown','reason':'sampler_pending_evidence',
+                    'pending_samples':reconciliation.get('pending'),'spool_retained':True}
+        if (joined is None or not joined.done() or joined.cancelled()
+                or joined.exception() is not None or joined.result() is not True):
+            return {'status':'unknown','reason':'sampler_executor_join_unconfirmed'}
+        self._sampler_closed=True
+        with self.journal._transaction() as state:state['observation_pending']=False
+        self._stop_receipt=self._sampler_receipt('stopped')
+        self.journal.audit('observation_stopped',process_epoch=self.process_epoch,
+                           sampler_receipt=self._stop_receipt)
+        return {'status':'completed','sampler_receipt':self._stop_receipt}
+
     async def _N07(self):
-        if self._sampler_closed:return {'status':'completed'}
+        # Freeze the actual owner before *any* native close, including mandatory
+        # N07 reached after an earlier node failed without ever executing N04.
+        if not self._sampler_owner(claim=True):
+            return {'status':'unknown','reason':'original_sampler_owner_unavailable'}
+        if self._stop_receipt is not None:
+            return {'status':'completed','sampler_receipt':self._stop_receipt}
         if self.sampler is None and self.journal.state().get('observation_pending'):
             return {'status':'unknown','reason':'original_sampler_spool_required'}
         deadline=time.monotonic()+self.case.cleanup_timeout_s
-        if self.sampler is not None:
-            with self.journal._transaction() as state:state['observation_pending']=True
         self._sample_stop.set()
+        if self.sched_observer:
+            self._sched_result=await self.sched_observer.stop(timeout_s=self.case.cleanup_timeout_s)
+            atomic_json(self.folder/'sched.json',self._sched_result)
+        if self.sampler is None:
+            self._stop_receipt=self._sampler_receipt('not_started')
+            self.journal.audit('observation_stopped',process_epoch=self.process_epoch,
+                               sampler_receipt=self._stop_receipt)
+            return {'status':'completed','sampler_receipt':self._stop_receipt}
+        with self.journal._transaction() as state:state['observation_pending']=True
+        if self._sampler_close_future is None:
+            def close_sampler():
+                self._close_worker_id=threading.get_native_id()
+                reconciliation=self.sampler.reconcile(self._resource_sink)
+                if reconciliation.get('status')=='reconciled' and not reconciliation.get('pending',0):
+                    self.sampler.close()
+                return reconciliation
+            # Queue close in the actual stop action, behind all already issued
+            # captures. A later query is allowed only to observe these futures.
+            self._sampler_close_future=self._sampler_pool.submit(close_sampler)
+            closing=self._sampler_close_future
+            async def join_after_close():
+                result=await asyncio.shield(asyncio.wrap_future(closing))
+                if result.get('status')!='reconciled' or result.get('pending',0):return False
+                await asyncio.to_thread(self._sampler_pool.shutdown,wait=True)
+                return True
+            self._sampler_shutdown_future=asyncio.create_task(join_after_close())
         if self._sample_task is not None:
-            try:await asyncio.wait_for(asyncio.shield(self._sample_task),max(.001,deadline-time.monotonic()))
+            try:
+                await asyncio.wait_for(asyncio.shield(self._sample_task),max(.001,deadline-time.monotonic()))
             except TimeoutError:
                 self.journal.audit('observation_stop_unknown',process_epoch=self.process_epoch)
                 return {'status':'unknown','reason':'sampler_stop_deadline'}
-        if self.sampler is not None:
-            def close_sampler():
-                reconciliation=self.sampler.reconcile(self._resource_sink)
-                if reconciliation.get('status')!='reconciled' or reconciliation.get('pending',0):return reconciliation
-                self.sampler.close()
-                return reconciliation
-            if self._sampler_close_future is None:
-                self._sampler_close_future=asyncio.get_running_loop().run_in_executor(self._sampler_pool,close_sampler)
-            closing=self._sampler_close_future
-            try:
-                reconciliation=await asyncio.wait_for(asyncio.shield(closing),max(.001,deadline-time.monotonic()))
-            except TimeoutError:
-                return {'status':'unknown','reason':'sampler_close_deadline'}
+            except asyncio.CancelledError:
+                if not self._sample_task.cancelled():raise
+        try:
+            reconciliation=await asyncio.wait_for(asyncio.shield(asyncio.wrap_future(self._sampler_close_future)),
+                                                   max(.001,deadline-time.monotonic()))
             if reconciliation.get('status')!='reconciled' or reconciliation.get('pending',0):
                 self._sampler_close_future=None
+                self._sampler_shutdown_future=None
                 self.journal.audit('observation_tail_unacknowledged',reconciliation=reconciliation)
                 return {'status':'unknown','reason':'sampler_pending_evidence',
                         'pending_samples':reconciliation.get('pending'),'spool_retained':True}
-            self._sampler_pool.shutdown(wait=False)
-            self._sampler_closed=True
-            with self.journal._transaction() as state:state['observation_pending']=False
-        self.journal.audit('observation_stopped',process_epoch=self.process_epoch)
-        return {'status':'completed'}
+            await asyncio.wait_for(asyncio.shield(self._sampler_shutdown_future),
+                                   max(.001,deadline-time.monotonic()))
+        except TimeoutError:
+            return {'status':'unknown','reason':'sampler_close_or_join_deadline'}
+        return self.sampler_stop_status()
 
     def close(self):
         """关闭 run 级连接池（不计入测量）。"""
@@ -534,6 +697,10 @@ class BenchSession:
                  'raw_refs':[{'path':'load.json','sha256':digest(report)}] if report else [],
                  'case_hash':self.case.digest(),'plan_ref':self.case.plan_ref,'contract_ref':self.case.contract_ref,
                  'environment_ref':self.case.environment_ref,'validation_policy':self.case.completion.validation_policy}
+        provenance=self.config.get('case_input_provenance')
+        if provenance is not None:
+            from .casegen import verify_provenance
+            records['case_input_provenance']=verify_provenance(self.case,provenance,allow_work_binding=True)
         if parents:records['parent_operations']=parents
         inventory=getattr(self.sampler,'inventory',None)
         if inventory:records['inventory']=inventory
@@ -562,6 +729,10 @@ class BenchSession:
         if report and end>report['started_at']:
             records['window']={'start_s':report['started_at'],'end_s':end,
                               'window_kind':'natural_drain','clock_domain':report['clock_domain']}
+        hold_path=self.folder/'hold.json'
+        if hold_path.exists(): records['creation_hold']=json.loads(hold_path.read_text())
+        sched_path=self.folder/'sched.json'
+        if sched_path.exists(): records['sched_observation']=json.loads(sched_path.read_text())
         density_path=self.folder/'density.json'
         if density_path.exists():
             density=json.loads(density_path.read_text());records['density']=density
@@ -581,6 +752,9 @@ class BenchSession:
             'condition':self.config.get('comparison_condition'),
             'window':{'kind':'natural_drain','load':self.case.load.model_dump(mode='json'),
                       'resources':self.case.resources.model_dump(mode='json') if self.case.resources else None}}
+        if provenance is not None:
+            records['comparison']['case_input']={k:provenance[k] for k in
+                ('file_sha256','case_sha256','conditions_hash','conditions')}
         return records
 
     async def _N08(self):
@@ -764,10 +938,10 @@ class BenchSession:
         atomic_json(self.folder/'execution_journal.json',execution)
         raw_payloads={p.name:p.read_bytes() for p in (self.folder/'load.json',self.folder/'density.json',
                      self.folder/'case.json',self.folder/'validation.json',self.folder/'target_bindings.json',
-                     self.folder/'steady.json',self.folder/'execution_journal.json') if p.exists()}
+                     self.folder/'steady.json',self.folder/'hold.json',self.folder/'sched.json',self.folder/'execution_journal.json') if p.exists()}
         raw_payloads.update({'resource/'+p.name:p.read_bytes() for p in (self.folder/'resource_samples').glob('*.json')})
         if self.source_lifecycle is not None:self.source_lifecycle.export()
-        for folder in ('host_samples','provider_evidence','fixture_restore','source_lifecycle'):
+        for folder in ('host_samples','provider_evidence','fixture_restore','source_lifecycle','sampler_lifecycle'):
             raw_payloads.update({folder+'/'+p.relative_to(self.folder/folder).as_posix():p.read_bytes()
                                  for p in (self.folder/folder).rglob('*.json')})
         records=self.records()

@@ -170,7 +170,7 @@ class MockScenario(Scenario):
 
 async def run_mock(progress=None, out=None, store_root=None, *, groups=2, works=2, requests=5,
                    concurrency=2, max_work_concurrency=2, vcpus=2, memory_bytes=2 * 1024 ** 3,
-                   fail_last_group=False, on_tick=None, model_gateway=None,
+                   fail_last_group=False, on_tick=None, model_gateway=None, case_files=None,
                    agent_allowed_fields=(), agent_fields_by_node=None, agent_accessible_evidence=()):
     store_root = Path(store_root or tempfile.mkdtemp(prefix='sandbox-mock-store-'))
     repo = MemoryRepository(FakeClock())
@@ -183,36 +183,54 @@ async def run_mock(progress=None, out=None, store_root=None, *, groups=2, works=
     operations = OperationService(repo, gateway, {('benchmark.step', '1'): bench_script})
     configs = OperationService(repo, environment, {('fixture.configure', '1'): config_script})
 
-    group_names = [f'G_{i + 1}' for i in range(groups)]
-    base, extra = divmod(works, groups)          # 12 个 / 3 组 => 每组 4 个
-    per_group = [base + (1 if i < extra else 0) for i in range(groups)]
+    generated=[]
+    if case_files is not None:
+        from sandbox_bench.casegen import load_case_file
+        if not case_files: raise ValueError('at least one complete case file required')
+        generated=[item for path in case_files for item in load_case_file(path)]
+        if any(item.case.graph_ref!='graph1' for item in generated):
+            raise ValueError('mock runtime implements graph1; select that explicit graph_ref')
+        group_names=list(dict.fromkeys(item.case.group_id for item in generated))
+        works=len(generated);groups=len(group_names)
+        inputs=[(group_names.index(item.case.group_id),item.case.group_id,index,item)
+            for index,item in enumerate(generated)]
+    else:
+        group_names = [f'G_{i + 1}' for i in range(groups)]
+        base, extra = divmod(works, groups)
+        inputs=[(gi,group,wi,None) for gi,group in enumerate(group_names)
+            for wi in range(base+(1 if gi<extra else 0))]
 
     cases, templates, scenarios = [], {}, {}
-    for gi, group in enumerate(group_names):
-        for wi in range(per_group[gi]):
-            ref = f'{group}-w{wi}'
+    for gi,group,wi,item in inputs:
+        ref = f'{group}-w{wi}'
+        if item is None:
             body = sample()
             body.update(group_id=group, environment_ref='fixture:' + group, work_id='template:' + ref,
-                        spec={'vcpus': vcpus, 'memory_bytes': memory_bytes},
-                        resources=RESOURCE_CONTRACT,
-                        load={**sample()['load'], 'requests': requests, 'concurrency': concurrency})
-            config = {'product': 'kuasar', 'api_url': 'http://localhost:1', 'data_url': 'http://localhost:1',
-                'source': {'kind': body['source']['kind'], 'id': body['source']['id']},
-                'create_body': {'timeout': 100, 'metadata': {'kuasar-sandbox.resource':
-                    json.dumps({'capacity': {'cpu': vcpus, 'memory': f'{memory_bytes // (1024**3)}GiB'}})}},
-                'source_evidence': {'source_id': body['source']['id'], 'source_digest': body['source']['digest'],
-                    'environment_ref': body['environment_ref'], 'cache_profile': body['cache_profile'],
-                    'effective_spec': body['spec'], 'evidence_ref': 'synthetic-source'},
-                'environment_evidence': {'ref': body['environment_ref'], 'product_version': body['product_version'],
-                    'evidence_kind': 'synthetic'}}
-            templates[ref] = {'case': body, 'config': config}
-            # 每个 work 一个 Case、各自独立冲突域：避免同一 Case 的所有 work 共享域而被互相阻塞。
-            cases.append(Case(capability='supported', adapter_verified=True, case_id=ref, group_id=group,
-                sandbox_type='kuasar', scenario_id='B01', method_id='B01.TEMPLATE', priority='base',
-                conditions=({'case_template_ref': ref},),
-                conflict_domains=(f'host:{group}:w{wi}',),
-                contract_ref='contracthash', environment_ref='fixture:' + group,
-                artifact_kind='sandbox_artifact', launch_path='cold_boot', producer_step='pre_existing'))
+                spec={'vcpus': vcpus, 'memory_bytes': memory_bytes},resources=RESOURCE_CONTRACT,
+                load={**sample()['load'], 'requests': requests, 'concurrency': concurrency})
+        else:
+            body=item.case.model_dump(mode='json')
+        config = {'product':body['product'], 'api_url':'http://localhost:1', 'data_url':'http://localhost:1',
+            'source':{'kind':body['source']['kind'],'id':body['source']['id']},
+            'create_body':{'timeout':body['ttl_s'],'metadata':{'kuasar-sandbox.resource':
+                json.dumps({'capacity':{'cpu':body['spec']['vcpus'],
+                    'memory':f"{body['spec']['memory_bytes'] // (1024**3)}GiB"}})}},
+            'source_evidence':{'source_id':body['source']['id'],'source_digest':body['source']['digest'],
+                'environment_ref':body['environment_ref'],'cache_profile':body['cache_profile'],
+                'effective_spec':body['spec'],'evidence_ref':'synthetic-source'},
+            'environment_evidence':{'ref':body['environment_ref'],'product_version':body['product_version'],
+                'evidence_kind':'synthetic'}}
+        if item is not None:
+            planning,template=item.register(config=config,priority='base',capability='supported',
+                adapter_verified=True,conflict_domains=(f'host:{group}:w{wi}',))
+            cases.append(planning);templates[item.template_ref]=template
+        else:
+            templates[ref]={'case':body,'config':config}
+            cases.append(Case(capability='supported',adapter_verified=True,case_id=ref,group_id=group,
+                sandbox_type='kuasar',scenario_id='B01',method_id='B01.TEMPLATE',priority='base',
+                conditions=({'case_template_ref':ref},),conflict_domains=(f'host:{group}:w{wi}',),
+                contract_ref='contracthash',environment_ref='fixture:'+group,
+                artifact_kind='sandbox_artifact',launch_path='cold_boot',producer_step='pre_existing'))
 
     def session_factory(case, config, folder):
         failing = fail_last_group and case.group_id == group_names[-1]
@@ -279,6 +297,9 @@ async def run_mock(progress=None, out=None, store_root=None, *, groups=2, works=
                'max_work_concurrency': max_work_concurrency,
                'spec': {'vcpus': vcpus, 'memory_bytes': memory_bytes},
                'artifact_store': str(store.root), 'status': status}
+    if generated:
+        summary['case_inputs']=[item.provenance for item in generated]
+        summary.pop('requests_per_work');summary.pop('spec')
     with repo.transaction() as tx:
         summary['work_states'] = {r['key']: (r['body'].get('group_id'), r['body']['status'], r['body'].get('queue_reason')) for r in tx.scan('work_instances')}
         summary['jobs_detail'] = [{'kind': j['body']['job_kind'], 'status': j['body']['status'], 'scope': j['body'].get('scope_ref')} for j in tx.scan('jobs')]

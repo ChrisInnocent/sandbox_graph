@@ -1,5 +1,13 @@
 # 统一实施与验证记录
 
+2026-10-24 后续新增 [helper 初始化与离线投递记录](agent-lifecycle-runtime/bootstrap-20261024.md)；单独列明本地安装与真实 SSH 验收边界。
+
+2026-10-24 最新停止缺陷修复及离线回归见 [R1–R3 修复记录](agent-lifecycle-runtime/stop-fixes-20261024.md)；此前的 [端到端检查](agent-lifecycle-runtime/e2e-review-20261024.md) 保留发现问题时的快照。两份记录区分局部修复、代码交付缺口与真实环境验收。
+
+2026-10-22 生命周期首批增量的独立记录见 [首批验证记录](agent-lifecycle-first-batch/README.md)。下文保留原日期对应的历史结果，不代表当前增量的全库验收。
+
+2026-10-23 后续的历史兼容、规划检查和实际测试收集见 [检查维护记录](agent-lifecycle-runtime/verification-maintenance-20261023.md)。该记录明确列出已收集范围与缺失设计路径，收集成功不代表完整 G1 或全库执行通过；最新实现边界见 [实施记录](../orchestration/progress.md)。
+
 2026-10-21，OpenSpec change：`sandbox-evaluation-workflow`。用户已授权设计完成后直接 apply。本轮已生成设计、测试契约及96项实施任务，并实现下述代码。整个 change 尚未完成，不归档、不宣称真实候选产品性能已验证。
 
 ## 可复查的验证证据
@@ -66,6 +74,8 @@ git diff --check
 
 ## 实际环境阻塞
 
+2026-10-23 生命周期增量的[本机后端预检](agent-lifecycle-runtime/backend-preflight-20261023.json)记录了工具发现和实际 namespace 启动命令：bubblewrap 0.13.0 的启动能力检查失败，不能在本机宣称候选隔离/G4 已验证。只读根挂载仅用于无副作用启动探针，不是候选部署配置。
+
 - 3项真实PostgreSQL测试：未提供 `SANDBOX_GRAPH_TEST_POSTGRES_DSN`，没有以内存或SQLite替代通过；多worker、双连接fencing、断连和controller硬杀仍需正式后端验收。
 - 1项真实Linux procfs测试：本机为HarmonyOS；冻结proc树测试不代替真实内核、权限和多节点采集验证。
 - 未提供三产品真实环境连接、部署版本及对应实验合同，没有运行真实功能／性能／密度测试。阈值、安装策略、Guest净值定义等未决输入只阻塞相应实验，不填入合成默认值。
@@ -80,3 +90,9 @@ git diff --check
 最新全库验证命令 `.venv/bin/python -m pytest -q`：**521 passed、4 skipped、101 subtests passed**；严格校验命令 `/storage/Users/currentUser/.npm-global/bin/openspec validate implement-sandbox-environment-adapters --strict` 通过；`git diff --check` 通过。输出在本次工作区终端中验证，未生成 pytest XML 或原始日志归档。
 
 这次实现的范围是环境声明/SSH/主机探测/凭据/证据/配置事务/修复计划/有限参数/远端 journal/执行网关/注册动作及通用 inventory 等底层组件。**三种产品的产品级探测、安装与配置修复、环境图与 CLI 接线，以及真实 Linux/PostgreSQL/产品验收均未完成。** 工作机为 HarmonyOS，未提供真实环境连接信息；4 个 skipped 不得解释为真实环境测试通过。任务清单保持未勾选状态，后续提交会继续更新本记录。
+
+## 生命周期运行时增量回归（2026-10-23）
+
+[编排层离线记录](agent-lifecycle-runtime/runtime-interim-20261023.md)：1692 passed、19 skipped，保留实际日志、JUnit及178份源摘要；这是阶段快照，不是完整门禁或真实后端验收。
+
+- [本地sampler与原ID安全续办阶段回归](agent-lifecycle-runtime/sampler-interim-20261023.md)：编排层1748 passed、19环境相关skip；不代表全库或完整生命周期门禁。

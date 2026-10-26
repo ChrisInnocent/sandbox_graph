@@ -1,5 +1,7 @@
 # 编排启动与验证
 
+节点生命周期的实际装配、rollout、rollback 和候选版本启动见 [操作手册](lifecycle-operations.md)。未配置 lifecycle runtime 时不会隐式调用宿主 agent；显式绑定已有 policy 的旧记录保持兼容。rollout 缺省沿用既有显式配置，off 禁止新修复/模型/候选，同时允许原 operation 对账和安全清理。真实可用状态与本地验证状态见 [能力账本](lifecycle-status.md)。
+
 > 真实 PostgreSQL／三产品／特权机的逐项验收步骤见 [acceptance-manual.md](../acceptance-manual.md)。本文件只说明启动、依赖与最小验证。
 
 本目录交付的是部分可执行控制面，不是主变更完成声明。运行结果、未完成工作和数据库验收边界见 [implementation-report.md](implementation-report.md)。公共接口见 [contracts.md](contracts.md)。
@@ -130,3 +132,15 @@ await worker.serve(stop_event)
   - 用例证据：按交付输出里的 `case_index_ref` 在 store 中定位 `<scope>/<sha256>`（scope 为环境组）。
   - **先看有什么**：`python -m sandbox_graph status <run_id>` 现在会列出 `deliveries`（每个 work 的 `case_index_ref` 与证据 `artifact_id`）、`analyses`（`files` 含 `facts.xlsx`）和 `archives`；据此再决定用哪条导出命令。
   - F4 被阻塞时，F1/`analysis_exports` 仍可定位产物；这只证明产物流水存在，**不证明交付或覆盖完整**。
+
+## 冻结 bundle 的 worker 启动
+
+`python -m sandbox_graph eval bundle-worker --runtime /absolute/runtime.json --lifecycle-runtime /absolute/lifecycle-runtime.json --bundle-ref BUNDLE_REF --once` 读取已注册 bundle，核对代码/可执行位/配置摘要后以 `execve` 替换当前进程。新 Python 使用 `-I -B`，先验证再导入 bundle，保留原 PID 给服务管理器；不复用主工作区已导入模块。需要明确 `SANDBOX_GRAPH_POSTGRES_DSN`、对应依赖及运行权限。去掉 `--once` 按 worker 原循环运行；旧 worker 继续原版本 drain。该入口不创建 candidate 晋级许可、不代替隔离后端。
+
+## 可信控制端套件装配
+
+`python scripts/prepare_trusted_gates.py --input /absolute/catalog-input.json --output /absolute/new-controller-catalog` 编译固定 G0/G1/G2/G3/G4/G6.pre 装配清单。输入精确字段：`schema_version=1`、`profile_ref`、`policy_hash`、`repository`、`candidate_root`、`gates`。每个 gate 必须提供 `suite_root`、由 `controller_pytest.suite_digest` 得到的 `suite_hash`、完整 `required_ids`、已注册隔离 `command_ref`、观察请求 `stdin`、有限 `timeout_s`。
+
+源套件与输出目录必须在主仓和候选目录之外，且不重叠；套件来自受信维护者，不能取候选提交的测试。工具复制并验证摘要，在控制端真实收集所有指定文件，拒绝缺 gate、缺/多 nodeid、零收集、摘要变更及路径交叠。输出 `cases.json` 供 lifecycle runtime 的 gates.cases 使用，`profile.json` 供既有可信注册表使用；profile 的 suite_hash 与实际 GateCase 身份一致。注册 producer/profile 仍须经过现有运维授权，不由该准备命令自动写库。
+
+输出状态是 prepared/qualification=unverified；此工具只装配套件，不生成 GateManifest。套件断言读取 `SANDBOX_OBSERVATIONS` 中的隔离观察，不能导入候选 Python、信任候选自报 pass/JUnit 或拿开发 profile 冒充生产验证。所选部署的 G3/G4/G6 观察合同、固定命令和真正的黑盒断言仍必须由维护者提供并完成后端验收。没有默认“六个 gate 一律 pass”套件。

@@ -44,6 +44,10 @@ class RegisteredBenchmarks:
             raise ValueError('case template not registered')
         template = self.templates[ref]
         body = deepcopy(template['case'])
+        provenance=template['config'].get('case_input_provenance')
+        if provenance is not None:
+            from .casegen import verify_provenance
+            verify_provenance(CaseContract.model_validate_json(json.dumps(body)),provenance)
         if (body['group_id'] != work['group_id'] or body['method_id'] != work['key']['method_id']
                 or body['contract_ref'] != work['contract_ref']
                 or body['method_version'] != work['key'].get('method_version', '1')

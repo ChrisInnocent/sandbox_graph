@@ -1,0 +1,5 @@
+..                                                                       [100%]
+============================= slowest 2 durations ==============================
+34.61s call     tests/benchmark/integration/test_capacity_wake.py::test_capacity_release_wakes_groups_waiting_on_concurrency_budget
+24.18s call     tests/benchmark/integration/test_capacity_wake.py::test_capacity_wake_does_not_require_extra_slots_than_authorized
+2 passed in 59.33s

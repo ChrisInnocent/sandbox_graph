@@ -1,7 +1,7 @@
 """Finite hierarchy expansion and durable independent group/work dispatch."""
 from uuid import uuid4
 from ..domain.models import WorkKey,canonical_hash
-from ..planning.compiler import Plan
+from ..planning.measurement_generation import load_plan
 from ..runtime.tasks import TaskBackend,JobSpec
 from ..persistence.repository import Conflict
 
@@ -38,7 +38,9 @@ class SchedulingService:
             tx.assert_fence(token)
             run=tx.get('runs',run_id)['body']; gate=tx.get('dispatch_gates',run_id)['body']
             if not gate['open']: raise Conflict('run dispatch closed')
-            plan=Plan.model_validate(tx.get('plans',run['active_plan_ref'])['body'])
+            plan=load_plan(tx.get('plans',run['active_plan_ref'])['body'])
+            from .measurement_generation import MeasurementGenerationService
+            MeasurementGenerationService.validate_run_in(tx,run_id,plan_ref=run['active_plan_ref'])
             if plan.stage in {'analysis','report'}: return []
             groups=sorted({c.group_id for c in plan.cases}); ids=[]
             for group in groups:
@@ -55,38 +57,50 @@ class SchedulingService:
             return ids
     def expand_work(self,run_id,group_id,*,plan_ref):
         with self.repository.transaction() as tx:
-            run=tx.get('runs',run_id)
-            if not run: raise KeyError(run_id)
-            plan=Plan.model_validate(tx.get('plans',plan_ref)['body'])
-            if plan.stage!='all': return []
-            ids=[]
-            for case in plan.cases:
-                if case.group_id!=group_id: continue
-                gaps=[g for g in plan.gaps if g.case_id==case.case_id]
-                if gaps:
-                    tx.put('coverage',f'{run_id}:{plan_ref}:{case.case_id}',{'scope':group_id,'run_id':run_id,'plan_ref':plan_ref,'case_id':case.case_id,'status':'unsupported' if case.capability=='unsupported' else 'blocked','gaps':[g.model_dump(mode='json') for g in gaps]},immutable=True)
-                    continue
-                from ..planning.identity import binding_payload, condition_identity
-                for condition in case.conditions:
-                    key=WorkKey(group_id=group_id,scenario_id=case.scenario_id,method_id=case.method_id,method_version=case.method_version,condition_hash=canonical_hash(condition_identity(case,condition)),repeat_id=case.repeat_id)
-                    identity=f'{run_id}:{plan_ref}:{key.identity}'
-                    body={'work_id':identity,'key':key.model_dump(mode='json'),'run_id':run_id,'group_id':group_id,'plan_ref':plan_ref,'graph_ref':run['body']['graph_ref'],'contract_ref':case.contract_ref,'environment_ref':case.environment_ref,'condition':condition,**binding_payload(case),'domains':list(case.conflict_domains),'status':'pending','queue_reason':None}
-                    existing=tx.get('work_instances',identity)
-                    if not existing: tx.put('work_instances',identity,body,immutable=True)
-                    ids.append(identity)
-            return ids
+            return self.expand_work_in(tx,run_id,group_id,plan_ref=plan_ref)
+
+    @staticmethod
+    def expand_work_in(tx,run_id,group_id,*,plan_ref):
+        from .measurement_generation import MeasurementGenerationService
+        extension=MeasurementGenerationService.validate_run_in(tx,run_id,plan_ref=plan_ref)
+        run=tx.get('runs',run_id)
+        if not run: raise KeyError(run_id)
+        plan=load_plan(tx.get('plans',plan_ref)['body'])
+        if hasattr(plan,'envelope') and extension is None: raise Conflict('generation plan requires authorized run binding')
+        if plan.stage!='all': return []
+        ids=[]
+        for case in plan.cases:
+            if case.group_id!=group_id: continue
+            gaps=[g for g in plan.gaps if g.case_id==case.case_id]
+            if gaps:
+                tx.put('coverage',f'{run_id}:{plan_ref}:{case.case_id}',{'scope':group_id,'run_id':run_id,'plan_ref':plan_ref,'case_id':case.case_id,'status':'unsupported' if case.capability=='unsupported' else 'blocked','gaps':[g.model_dump(mode='json') for g in gaps]},immutable=True)
+                continue
+            from ..planning.identity import binding_payload, condition_identity
+            for condition in case.conditions:
+                key=WorkKey(group_id=group_id,scenario_id=case.scenario_id,method_id=case.method_id,method_version=case.method_version,condition_hash=canonical_hash(condition_identity(case,condition)),repeat_id=case.repeat_id,measurement_generation=extension.measurement_generation if extension else 1)
+                identity=f'{run_id}:{plan_ref}:{key.identity}'
+                body={'work_id':identity,'key':key.model_dump(mode='json'),'run_id':run_id,'group_id':group_id,'plan_ref':plan_ref,'graph_ref':run['body']['graph_ref'],'contract_ref':case.contract_ref,'environment_ref':case.environment_ref,'condition':condition,**binding_payload(case),'domains':list(case.conflict_domains),'status':'pending','queue_reason':None}
+                if extension:
+                    body.update(source_work_ref=extension.source_work_ref,source_lifecycle_ref=extension.source_lifecycle_ref,measurement_plan_ref=extension.hash)
+                existing=tx.get('work_instances',identity)
+                if not existing: tx.put('work_instances',identity,body,immutable=True)
+                ids.append(identity)
+        return ids
     def dispatch_work(self,run_id,group_id,*,token,max_concurrency,deadline):
         if max_concurrency<1: raise ValueError('positive finite work concurrency required')
         self.materialize_reuse(run_id,group_id,token=token)
         with self.repository.transaction() as tx:
             tx.assert_fence(token)
+            from .measurement_generation import MeasurementGenerationService
+            extension=MeasurementGenerationService.validate_run_in(tx,run_id)
             gate=tx.get('dispatch_gates',run_id)
             if not gate or not gate['body']['open']: raise Conflict('run dispatch closed')
-            active=sum(j['body']['status'] in {'pending','running'} and j['body'].get('run_id')==run_id and j['body']['job_kind']=='work' for j in tx.scan('jobs'))
+            active=sum(j['body']['status'] in {'pending','running'} and j['body'].get('run_id')==run_id and j['body']['job_kind'] in {'work','measurement-v1:work'} for j in tx.scan('jobs'))
             slots=max(0,max_concurrency-active); ids=[]
             for row in tx.scan('work_instances'):
                 work=row['body']
                 if work['run_id']!=run_id or work['group_id']!=group_id or work['status']!='pending': continue
+                if extension: MeasurementGenerationService.validate_work_in(tx,extension,work)
                 candidate=tx.get('reuse_candidates',work['work_id'])
                 if candidate and candidate['body']['status']!='remeasure':
                     tx.put('work_instances',row['key'],work|{'queue_reason':f'reuse_candidate_{candidate["body"]["status"]}'})
@@ -103,6 +117,12 @@ class SchedulingService:
                                        if r and r['body'].get('status')=='quarantine')
                     tx.put('work_instances',row['key'],work|{'queue_reason':'lease_quarantined' if quarantined else 'resource_conflict'})
                     continue
+                if extension:
+                    from .lifecycle_budgets import LifecycleBudgetService
+                    reservation='measurement-child:'+work['work_id']
+                    LifecycleBudgetService.reserve_in(tx,request_id=reservation,lifecycle_id=extension.source_lifecycle_ref,
+                        amounts={'child_jobs':1},input_ref=extension.hash)
+                    LifecycleBudgetService.settle_in(tx,request_id=reservation)
                 # Reservation belongs to work, not group driver: takeover never frees it.
                 for domain in domains: tx.put('resource_leases',domain,{'scope':work['work_id'],'thread_id':token.thread_id,'owner_epoch':token.owner_epoch,'status':'reserved'})
                 identity=str(uuid4())

@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "profile": "stop-persistent",
+  "paths": [
+    "tests/orchestration/persistence/test_lifecycle_stop_transactions.py",
+    "tests/orchestration/recovery/test_lifecycle_stop_recovery.py"
+  ],
+  "required_ids": [
+    "tests/orchestration/persistence/test_lifecycle_stop_transactions.py::test_cutoff_races_submission[submission]",
+    "tests/orchestration/persistence/test_lifecycle_stop_transactions.py::test_cutoff_races_submission[cutoff]",
+    "tests/orchestration/persistence/test_lifecycle_stop_transactions.py::test_proof_races_late_effect[proof]",
+    "tests/orchestration/persistence/test_lifecycle_stop_transactions.py::test_proof_races_late_effect[late_effect]",
+    "tests/orchestration/recovery/test_lifecycle_stop_recovery.py::test_crash_cutpoints[T1.before]",
+    "tests/orchestration/recovery/test_lifecycle_stop_recovery.py::test_crash_cutpoints[T1.after]",
+    "tests/orchestration/recovery/test_lifecycle_stop_recovery.py::test_crash_cutpoints[T2.enqueue]",
+    "tests/orchestration/recovery/test_lifecycle_stop_recovery.py::test_crash_cutpoints[T2.ack]",
+    "tests/orchestration/recovery/test_lifecycle_stop_recovery.py::test_crash_cutpoints[T2.after]",
+    "tests/orchestration/recovery/test_lifecycle_stop_recovery.py::test_crash_cutpoints[T6.before]",
+    "tests/orchestration/recovery/test_lifecycle_stop_recovery.py::test_crash_cutpoints[T6.after]",
+    "tests/orchestration/recovery/test_lifecycle_stop_recovery.py::test_hard_kill_after_external_acceptance_reconciles_original_id",
+    "tests/orchestration/recovery/test_lifecycle_stop_recovery.py::test_late_fact_crash_preserves_atomic_proof_invalidation[before]",
+    "tests/orchestration/recovery/test_lifecycle_stop_recovery.py::test_late_fact_crash_preserves_atomic_proof_invalidation[after]"
+  ],
+  "requires": [
+    "SANDBOX_GRAPH_TEST_POSTGRES_DSN"
+  ]
+}

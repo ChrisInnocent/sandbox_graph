@@ -1,0 +1,58 @@
+{
+  "date": "2026-10-23",
+  "scope": "Documentation coherence correction only; no runtime tests rerun and no new implementation acceptance",
+  "workspaces": [
+    {
+      "workspace": "/storage/Users/currentUser/IDEProjects/sandbox_graph",
+      "checked": 148,
+      "total": 208,
+      "links_checked": 296,
+      "broken_links": [],
+      "openspec": {
+        "totals": {
+          "items": 3,
+          "passed": 3,
+          "failed": 0
+        },
+        "byType": {
+          "change": {
+            "items": 3,
+            "passed": 3,
+            "failed": 0
+          },
+          "spec": {
+            "items": 0,
+            "passed": 0,
+            "failed": 0
+          }
+        }
+      }
+    },
+    {
+      "workspace": "/storage/Users/currentUser/IDEProjects/sandbox_graph/.worktrees/agent-lifecycle",
+      "checked": 150,
+      "total": 209,
+      "links_checked": 317,
+      "broken_links": [],
+      "openspec": {
+        "totals": {
+          "items": 3,
+          "passed": 3,
+          "failed": 0
+        },
+        "byType": {
+          "change": {
+            "items": 3,
+            "passed": 3,
+            "failed": 0
+          },
+          "spec": {
+            "items": 0,
+            "passed": 0,
+            "failed": 0
+          }
+        }
+      }
+    }
+  ]
+}

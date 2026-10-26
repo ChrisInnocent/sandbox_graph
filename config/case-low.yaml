@@ -1,0 +1,39 @@
+# 完整离线用例；source/version/environment 都是合成夹具，不是真实沙箱合同。
+schema_version: case.v1
+method_id: B01.TEMPLATE
+method_version: '1'
+product: kuasar
+product_version: synthetic-fixture
+work_id: input/low
+group_id: G_1
+source:
+  kind: template
+  id: template-1
+  digest: sha256:synthetic-template-1
+  artifact_kind: sandbox_artifact
+  launch_path: cold_boot
+  producer_step: pre_existing
+spec: 2v2g
+completion:
+  endpoint: STATE_READY
+  timeout_s: 2.0
+  poll_interval_s: 0.01
+load:
+  mode: WINDOW
+  requests: 2
+  concurrency: 1
+  run_timeout_s: 10.0
+  max_unknown_external: 0
+repeat_id: 1
+topology: node_direct
+ttl_s: 100.0
+cleanup_timeout_s: 2.0
+cache_profile: warm
+environment_ref: fixture:G_1
+contract_ref: contracthash
+graph_ref: graph1
+plan_ref: input/low-plan
+# 此低条件用例显式只验证执行链。资源测量需 resources + inventory/collector。
+resource_observation_waived: true
+declared_metrics: []
+declared_conditions: []

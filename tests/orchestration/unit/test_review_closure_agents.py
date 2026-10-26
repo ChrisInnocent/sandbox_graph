@@ -123,7 +123,7 @@ def test_archive_rechecks_fence_and_actual_inflight_inside_seal(repository):
     with pytest.raises(Conflict,match='in-flight'): ClosureService(repository).seal_archive('r',**args)
     with repository.transaction() as tx:
         tx.put('operations','op',{'run_id':'r','scope':'w','phase':'uncertain'})
-        tx.put('resource_leases','host',{'scope':'w','status':'quarantine'})
+        tx.put('resource_leases','host',{'scope':'w','run_id':'r','status':'quarantine'})
     assert ClosureService(repository).seal_archive('r',**args)['status']=='partial'
     repository.clock.advance(31)
     with pytest.raises(StaleOwner): ClosureService(repository).seal_archive('r',**args)

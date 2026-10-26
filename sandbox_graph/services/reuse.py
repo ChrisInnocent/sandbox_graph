@@ -1,5 +1,6 @@
 """Explicit compatible evidence references and finite waits for old deliveries."""
 from ..domain.models import Model
+from ..runtime.tasks import business_job_kind
 from ..persistence.repository import Conflict
 
 class ReuseContract(Model):
@@ -121,7 +122,7 @@ class ReuseService:
                 candidate=candidate['body'];work=work['body']
                 run=tx.get('runs',work['run_id'])
                 if not run or (run['body']['active_plan_ref'],run['body']['graph_ref'])!=(work['plan_ref'],work['graph_ref']): raise Conflict('reuse target is no longer in the active execution plan')
-                if work['status'] not in {'pending','blocked'} or any(j['body']['job_kind']=='work' and j['body']['scope_ref']==work_id for j in tx.scan('jobs')): raise Conflict('independent measurement already started')
+                if work['status'] not in {'pending','blocked'} or any(business_job_kind(j['body']['job_kind'])=='work' and j['body']['scope_ref']==work_id for j in tx.scan('jobs')): raise Conflict('independent measurement already started')
                 old=ReuseContract.model_validate(candidate['old_contract']);new=ReuseContract.model_validate(candidate['new_contract'])
                 if min(old.valid_until,new.valid_until,candidate['deadline'])<=tx.now: raise Conflict('reuse evidence or candidate expired')
                 source_review=tx.get('delivery_reviews',candidate['delivery_ref'])

@@ -8,7 +8,8 @@ def test_catalogue_covers_all_b_and_e_methods():
     b_series = {m for m in METHODS if m.startswith('B')}
     e_series = {m for m in METHODS if m.startswith('E')}
     assert {m for m in b_series if m.startswith('B01.')} == {
-        'B01.TEMPLATE', 'B01.SNAPSHOT.DISK', 'B01.SNAPSHOT.MEMORY'}
+        'B01.TEMPLATE', 'B01.SNAPSHOT.DISK', 'B01.SNAPSHOT.MEMORY',
+        'B01.TEMPLATE.HOLD','B01.SNAPSHOT.DISK.HOLD','B01.SNAPSHOT.MEMORY.HOLD'}
     assert {'B10.FIXED_REQUESTS.WINDOW', 'B10.FIXED_REQUESTS.BATCH'} <= b_series
     assert e_series == {'E01.WORKLOAD', 'E02.RESET', 'E03.MIXED_SOAK',
                         'E04.PRESSURE', 'E05.INTERFERENCE', 'E06.RECOVERY'}

@@ -220,17 +220,28 @@ class CaseContract(StrictModel):
     @model_validator(mode='after')
     def validate_method(self):
         from .registry import METHODS
+        from .creation_hold import HOLD_METHODS,HOLD_GRAPH_REF,base_method
+        method=base_method(self.method_id)
+        if self.method_id in HOLD_METHODS:
+            if self.resources is None or self.resource_observation_waived:
+                raise ValueError('HOLD requires explicit resource observation')
+            if self.graph_ref!=HOLD_GRAPH_REF:
+                raise ValueError('HOLD requires the new hold:1 graph version')
+            if self.resources.max_wait_s<=self.resources.window_s or self.resources.min_samples<2:
+                raise ValueError('HOLD resource window needs finite sampling and drain budget')
+            if self.ttl_s<=self.load.run_timeout_s+self.completion.timeout_s+self.resources.max_wait_s+self.cleanup_timeout_s:
+                raise ValueError('HOLD TTL must also cover the retained observation budget')
         if self.method_id not in METHODS:
             raise ValueError('unknown method')
         if self.method_id.startswith(('B01.', 'B00.')):
             if (self.source.artifact_kind is None or self.source.launch_path is None
                     or self.source.producer_step is None):
                 raise ValueError('B01/B00 source requires artifact_kind, launch_path and producer_step')
-            if self.method_id == 'B01.SNAPSHOT.MEMORY' and self.source.launch_path != 'memory_restore':
+            if method == 'B01.SNAPSHOT.MEMORY' and self.source.launch_path != 'memory_restore':
                 raise ValueError('memory snapshot method requires memory_restore')
-            if self.method_id == 'B01.SNAPSHOT.DISK' and self.source.launch_path not in ('disk_restore', 'cold_boot'):
+            if method == 'B01.SNAPSHOT.DISK' and self.source.launch_path not in ('disk_restore', 'cold_boot'):
                 raise ValueError('disk snapshot method requires disk or cold restore')
-            if self.method_id == 'B01.TEMPLATE' and self.source.artifact_kind == 'snapshot_manifest':
+            if method == 'B01.TEMPLATE' and self.source.artifact_kind == 'snapshot_manifest':
                 raise ValueError('template method cannot use snapshot manifest')
             if self.method_id == 'B00.SNAPSHOT_BUILD' and self.source.artifact_kind != 'snapshot_manifest':
                 raise ValueError('snapshot build must produce a snapshot manifest')

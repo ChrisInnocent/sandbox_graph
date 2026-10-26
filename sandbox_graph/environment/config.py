@@ -43,7 +43,7 @@ def _unique_pairs(pairs):
 
 def load_config(path: str | Path, *, max_bytes: int = 1_048_576) -> dict[str, Any]:
     source = Path(path)
-    payload = source.read_bytes()
+    with source.open('rb') as stream:payload=stream.read(max_bytes+1)
     if len(payload) > max_bytes:
         raise ValueError("configuration exceeds size limit")
     try:

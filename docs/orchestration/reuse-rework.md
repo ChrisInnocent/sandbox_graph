@@ -45,3 +45,46 @@
 这是对显式冻结输入的分析重算，可能包含计算对照所需的同组数据；不新增测量工作或样本。只有 A7 的展示局部重算尚无单独执行器。supplement/remeasure 和未知 action 当前直接返回并记录 `ADAPTER_MISSING` blocked；扩围返回 `REPLAN_REQUIRED`；输入不完整返回 `EVIDENCE_INSUFFICIENT`。不会为这些缺合同动作生成无人消费的任务。修改合同必须创建新 order，不能改写已记录处置。
 
 专项证据：`unit/test_reuse_projection.py`、`unit/test_rework.py`，以及根代理的 `tests/benchmark/integration/test_analysis_graph.py` 和 `test_work_graph_session.py`。其中返工测试实际经 Worker、LangGraph、AnalysisReportServices、公式和 Excel 生成结果；没有用成功节点桩替代计算。真实 PostgreSQL、外部测量重跑及完整故障矩阵仍未验证。
+
+
+## T6 精确交付返工（2026-10-23 本地实现）
+
+Worker 在交付发布事务中写入独立的 `work_delivery_sources`，绑定实际 job、activation、
+result_refs 和 delivery hash。T6 独立审核后，通过 DeliveryReworkService 冻结
+schema_version=1 的 `delivery_rework_gaps`（run/group/plan、不可变 review/delivery 摘要、
+原节点/receipt/visit/job）。旧交付缺少此来源或存在多个失败来源时保留 needs_input，
+不能从 findings/gaps 文本猜测节点。旧 DeliveryManifest/Plan hash 不变。
+
+```mermaid
+flowchart TD
+  D[Worker 发布交付及执行来源] --> T[T6 ReviewService 独立审核]
+  T -->|拒收| P[核验来源 身份 摘要及唯一失败节点]
+  P -->|缺失或不唯一| I[needs_input 保留拒收事实]
+  P -->|唯一| G[不可变缺口及返工 outbox]
+  G --> S[工作 LifecycleSupervisor 消费]
+  S -->|已有 life 或恢复子| L[关联原 owner 与原预算]
+  S -->|首次且精确授权有效| A[原 attach_failure 事务校验]
+  S -->|权限或版本错误| I
+  A --> B[有界诊断 修复 RecoveryPlan]
+  B --> C[N07 N09 N10 收尾 新版本交付]
+  C --> T
+  T -->|审核通过| V[校验当前成功 attempt 及受信复用回执]
+  V --> R[追加解决证据 保留旧失败与拒收]
+```
+
+组 agent 只记录缺口，不授予 work/measure 权限。工作监督者使用既有操作员精确授权，
+重复审核不刷新预算，恢复子失败只关联原生命周期。RecoveryPlan 明确允许的旧回执复用
+须验证冻结映射与摘要。`delivery_reviews` 是最新投影，不能替代缺口引用的历史 `reviews`。
+解决依据追加于 `delivery_rework_resolutions`；最新状态在 `delivery_rework_status`。
+解决后迟到 outbox 不再次开工。pending 缺口阻止归档，未解决输入缺口阻止 complete 归档，
+显式 partial 归档保留缺口引用；原有活跃 lifecycle、采样、未知操作和隔离门禁仍有效。
+
+来源核验、去重、权限、排队、预算、恢复及复审均脚本化；来源不明确、策略未知或授权缺失
+需要模型诊断/人工补充。T6 不自动申请新测量代际，A/F 计算返工仍走原独立入口。
+
+`tests/orchestration/graphs/test_delivery_rework.py` 的11项专项测试使用真实 Worker、
+StateGraph、NodeExecutor、ReviewService，以及明确的合成 runner。覆盖 N07/N09 正例、
+缺授权、错误/模糊来源、同名 group 跨 run 隔离、恢复子预算、归档、新版本解决和迟到重放。
+本地固定门禁278项通过，无 skip；证据为
+`artifacts/gates/measurement-generation/20261023T151506Z-ee60f986`。
+尚不代表真实 PostgreSQL、产品沙箱现场或45.4全部跨 scope cancel/supersede验收。

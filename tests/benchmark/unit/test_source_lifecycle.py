@@ -130,10 +130,15 @@ async def test_pending_callback_cannot_be_reconciled_until_settled(tmp_path):
     import asyncio
     path=tmp_path/'sources.json';ledger=SourceLedger(path,'env')
     ledger.register('s',owner_work='w',creation_evidence_ref='creation')
-    release=asyncio.Event()
+    release=asyncio.Event();entered=asyncio.Event()
     async def inspect(sid):return proof()
-    async def delete(sid,timeout):await release.wait()
-    result=await ledger.cleanup('s',owner_work='w',inspector=inspect,deleter=delete,timeout_s=.01,max_age_s=1)
+    async def delete(sid,timeout):entered.set();await release.wait()
+    # Wait for actual submission, rather than assuming fsync completes in 10ms.
+    task=asyncio.create_task(ledger.cleanup('s',owner_work='w',inspector=inspect,deleter=delete,timeout_s=10,max_age_s=10))
+    await asyncio.wait_for(entered.wait(),5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):await task
+    result=ledger.snapshot()['sources']['s']['cleanup']
     old_proof=proof(False)
     try:
         with pytest.raises(ValueError,match='active'):
@@ -142,7 +147,9 @@ async def test_pending_callback_cannot_be_reconciled_until_settled(tmp_path):
         with pytest.raises(ValueError,match='settlement'):
             restored.reconcile_absent('s',owner_work='w',proof=old_proof,max_age_s=1)
         assert restored.snapshot()['sources']['s']['cleanup']['callback_pending']
-    finally:release.set();await asyncio.sleep(.02)
+    finally:
+        callbacks=list(ledger._active_callbacks.values())
+        release.set();await asyncio.gather(*callbacks);await asyncio.sleep(0)
     with pytest.raises(ValueError,match='predates'):
         restored.reconcile_absent('s',owner_work='w',proof=old_proof,max_age_s=1)
     assert restored.reconcile_absent('s',owner_work='w',proof=proof(False),max_age_s=1)['status']=='complete'

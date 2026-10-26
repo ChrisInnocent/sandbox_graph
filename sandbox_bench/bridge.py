@@ -6,13 +6,79 @@ arbitrary shell, a model message, or a request-supplied directory.
 """
 from __future__ import annotations
 import time
+import json
+import hashlib
+from copy import deepcopy
+from .runner import digest
+from .sampler_lifecycle import process_identity
 from sandbox_graph.domain.models import NodeResult, ErrorRecord, Operation, canonical_hash
 from sandbox_graph.runtime.runner import RunnerStatus, RunnerCollection, CleanupResult
 
 
 class BenchGateway:
+    sampler_receipt_contract='bench-sampler-collection.v1'
     def __init__(self,sessions,script_ref):
         self.sessions=dict(sessions);self.script_ref=script_ref
+        self._issued_sampler_receipts={}
+
+    def bind_execution(self,operation,binding):
+        """Called only by the fenced OperationService, never from model input."""
+        session=self._session(operation.scope)
+        case=session.case
+        if (binding['run_id']!=operation.run_id or binding['scope']!=case.work_id
+                or binding['work_id']!=case.work_id or binding['group_id']!=case.group_id
+                or any(binding[k]!=getattr(case,k) for k in ('plan_ref','graph_ref','contract_ref'))
+                or type(binding['measurement_generation']) is not int or binding['measurement_generation']<1):
+            raise ValueError('benchmark sampler work/generation binding differs')
+        binding=deepcopy(binding) | {'case_hash':case.digest(),'config_hash':digest(session.config)}
+        if operation.node_id in {'N04','N07'}:
+            if not session._sampler_owner(claim=True):
+                raise ValueError('original sampler owner unavailable')
+            binding.update(sampler_session_id=session.process_epoch,
+                           sampler_process_identity=session._sampler_identity)
+        if operation.node_id in {'N04','N07'}:
+            with session.journal._transaction() as state:
+                previous=state.get('sampler_binding')
+                frozen=binding | {'operation_id':operation.operation_id}
+                if previous and any(previous[k]!=binding[k] for k in binding if k not in {'owner','job_refs'}):
+                    raise ValueError('original sampler run/generation binding changed')
+                if previous is None:
+                    state['sampler_binding']=frozen
+        return binding
+
+    def verify_sampler_receipt(self,receipt,operation_id,scope):
+        """Live adapter capability verifies exact issued bytes and local owner.
+
+        A caller boolean, copied artifact path, previous process, or unrelated
+        collection has no entry in this producer capability registry.
+        """
+        session,_=self._binding(operation_id,scope)
+        ref=canonical_hash(receipt)
+        if (receipt.get('contract')!='bench-sampler-collection.v1'
+                or self._issued_sampler_receipts.get(ref)!=receipt
+                or receipt['collection_operation_id']!=operation_id
+                or receipt['binding']['scope']!=scope
+                or receipt['evidence']['process_identity']!=process_identity()
+                or receipt['evidence']['session_id']!=session.process_epoch):
+            raise ValueError('sampler receipt producer/session/collection invalid')
+        evidence=receipt['evidence']
+        artifact='sampler-'+digest(evidence)+'.json'
+        path=session.folder/'sampler_lifecycle'/artifact
+        if (session._lifecycle_artifacts.get(artifact)!=evidence or not path.exists()
+                or json.loads(path.read_text())!=evidence):
+            raise ValueError('sampler receipt artifact missing or changed')
+        samples={p.name:hashlib.sha256(p.read_bytes()).hexdigest()
+                 for p in (session.folder/'resource_samples').glob('*.json')}
+        if (digest(evidence['samples'])!=evidence['samples_sha256']
+                or any(samples.get(name)!=checksum for name,checksum in evidence['samples'].items())
+                or (evidence['state'] in {'stopped','not_started'} and samples!=evidence['samples'])):
+            raise ValueError('sampler receipt raw artifact inventory changed')
+        if evidence['state'] in {'stopped','not_started'}:
+            if (evidence['executor_exit']!=('joined' if evidence['state']=='stopped' else 'not_started')
+                    or evidence['capture_submitted']!=evidence['capture_completed']
+                    or evidence['loop_exit'] not in {'completed','cancelled','not_started'}
+                    or evidence['close_exit']!=('completed' if evidence['state']=='stopped' else 'not_started')):
+                raise ValueError('sampler receipt tasks did not exit')
 
     def _session(self,scope):
         if scope not in self.sessions:raise PermissionError('benchmark scope not registered')
@@ -23,7 +89,7 @@ class BenchGateway:
         row=session.journal.state().get('gateway_operations',{}).get(operation_id)
         if row is None:raise KeyError('unknown operation')
         if row['scope']!=scope:raise PermissionError('operation scope mismatch')
-        return session,row
+        return session,dict(row,operation_id=operation_id)
 
     def _status(self,session,result,step=None):
         state=result.get('status','unknown')
@@ -52,14 +118,73 @@ class BenchGateway:
                 raise ValueError('operation ID reused with different input')
             operations[operation.operation_id]=value
         result=await session.apply_step(step,operation.input_hash,visit_id=operation.operation_id)
+        if step=='N04' and result.get('status') not in {'completed','ready'}:
+            result=dict(result,data_status='insufficient')
         return self._status(session,result,step)
+
+    def _observation_status(self,session,row,stop=None):
+        result=session.journal.receipt(row['step_id']+':'+row['operation_id'],row['input_hash'])
+        if result is None:result={'status':'unknown','reason':'original_step_result_unavailable'}
+        original=deepcopy(result)
+        if row['step_id']=='N04':
+            result=deepcopy(original)
+            if stop is not None:
+                result['original_result']=original
+                result['sampler_stop']=stop
+                if original.get('status')=='unknown' and stop.get('status')=='completed':
+                    result['status']='cancelled'
+                    result['reason']='original_observation_interrupted_and_stopped'
+            if (original.get('status') not in {'completed','ready'}
+                    or (stop or {}).get('sampler_receipt',{}).get('has_gaps')):
+                result['data_status']='insufficient'
+        elif stop is not None:
+            result=stop
+        return self._status(session,result,row['step_id'])
 
     async def reconcile(self,operation_id,scope):
         session,row=self._binding(operation_id,scope)
+        if row['step_id'] in {'N04','N07'}:
+            return self._observation_status(session,row)
         result=session.journal.receipt(row['step_id']+':'+operation_id,row['input_hash'])
         if result is None or result.get('status')=='unknown':
             result=await session.reconcile(row['step_id'],discover=True)
         return self._status(session,result,row['step_id'])
+
+    async def reconcile_observed(self,operation_id,scope,intent):
+        session,row=self._binding(operation_id,scope)
+        if intent is None:return await self.reconcile(operation_id,scope)
+        if session.journal.state().get('sampler_stop_intents',{}).get(operation_id)!=intent:
+            raise PermissionError('original sampler stop intent differs')
+        return self._observation_status(session,row,session.sampler_stop_status())
+
+    def authorize_sampler_stop(self,operation_id,scope,intent):
+        session=self._session(scope)
+        if (intent['operation_id']!=operation_id or intent['scope']!=scope
+                or intent['contract']!='bench-sampler-stop-intent.v1'):
+            raise PermissionError('sampler stop intent target differs')
+        with session.journal._transaction() as state:
+            intents=state.setdefault('sampler_stop_intents',{})
+            old=intents.get(operation_id)
+            if old is not None and old!=intent:raise PermissionError('sampler stop intent changed')
+            intents[operation_id]=deepcopy(intent)
+        return old is None
+
+    async def cancel_observed(self,operation_id,scope,reason,intent):
+        session,row=self._binding(operation_id,scope)
+        if row['step_id'] not in {'N04','N07'}:
+            return await self.cancel(operation_id,scope,reason)
+        if intent['adapter_owner']!={'session_id':session.process_epoch,'process_identity':session._sampler_identity}:
+            return self._observation_status(session,row,{'status':'unknown','reason':'original_sampler_owner_unavailable'})
+        fresh=self.authorize_sampler_stop(operation_id,scope,intent)
+        await session.cancel(reason)
+        if not fresh:
+            return self._observation_status(session,row,session.sampler_stop_status())
+        return self._observation_status(session,row,await session._N07())
+
+    def sampler_owner(self,operation_id,scope):
+        session,_=self._binding(operation_id,scope)
+        return session.journal.state().get('sampler_owner') or {
+            'session_id':session.process_epoch,'process_identity':session._sampler_identity}
 
     async def cancel(self,operation_id,scope,reason):
         session,_=self._binding(operation_id,scope)
@@ -71,7 +196,15 @@ class BenchGateway:
         if type(last_seq) is not int or last_seq<0:raise ValueError('invalid cursor')
         events=session.collect(last_seq)
         latest=events[-1]['seq'] if events else last_seq
-        return RunnerCollection(events=tuple(events),last_seq=latest)
+        binding=session.journal.state().get('sampler_binding')
+        receipts=[]
+        if binding:
+            for evidence in session._lifecycle_artifacts.values():
+                receipt={'contract':'bench-sampler-collection.v1','binding':deepcopy(binding),
+                    'collection_operation_id':operation_id,'evidence':deepcopy(evidence)}
+                self._issued_sampler_receipts[canonical_hash(receipt)]=deepcopy(receipt)
+                receipts.append(receipt)
+        return RunnerCollection(events=tuple(events),last_seq=latest,sampler_receipts=tuple(receipts))
 
     async def cleanup(self,scope,resource_ids):
         session=self._session(scope)
@@ -100,6 +233,8 @@ def work_handlers(operation_service,token,session,*,run_id,scope,dispatch_genera
                 dispatch_generation=dispatch_generation,
                 submission_kind='cleanup' if node in ('N07','N09','N10') else 'ordinary')
             status=await operation_service.submit(operation,token)
+            if node in {'N04','N07'}:
+                await operation_service.collect(operation.operation_id,scope,token)
             original=status.output.get('status')
             execution='succeeded' if status.state=='completed' else 'blocked' if original=='blocked' else 'cancelled' if status.state=='cancelled' else 'failed'
             return NodeResult(execution_status=execution,data_status=status.output.get('data_status','unverified'),

@@ -25,6 +25,22 @@ from .scenario_density import CohortSnapshot, DensityController
 from .steady import SteadyConfig, find_steady_window
 
 
+class DiscoveryBinding(StrictModel):
+    product: Literal['cubesandbox','kuasar','agentenv']
+    roles: list[str] = Field(min_length=1)
+    runtime_root: str
+    machine_id_file: str
+
+    @model_validator(mode='after')
+    def registered(self):
+        from sandbox_graph.environment.probes.inventory import product_rules
+        product_rules(self.product,self.roles)
+        for value in (self.runtime_root,self.machine_id_file):
+            if not Path(value).is_absolute() or Path(value).resolve()!=Path(value):
+                raise ValueError('canonical local discovery paths required')
+        return self
+
+
 class ProcfsBinding(StrictModel):
     kind: Literal['procfs','collector_procfs']
     inventory_path: str
@@ -33,11 +49,13 @@ class ProcfsBinding(StrictModel):
     clock_ticks: Count
     max_pending: Count
     snapshot_path: str | None = None
+    discovery: DiscoveryBinding | None = None
 
     @model_validator(mode='after')
     def dynamic_path(self):
         if (self.kind=='collector_procfs') != (self.snapshot_path is not None):
             raise ValueError('collector procfs requires exactly one explicit snapshot path')
+        if self.discovery is not None and self.kind!='collector_procfs':raise ValueError('discovery requires collector_procfs')
         return self
 
 
@@ -129,6 +147,7 @@ class WiringConfig(StrictModel):
     slo: SourceBinding | None = None
     restore: RestoreBinding | None = None
     source_cleanup: SourceCleanupBinding | None = None
+    sched_switch: bool = False
 
     @model_validator(mode='after')
     def absolute_paths(self):
@@ -139,6 +158,8 @@ class WiringConfig(StrictModel):
                     if not Path(value).is_absolute():raise ValueError('provider paths must be absolute')
         if (self.sampler is None)!=(self.steady is None):
             raise ValueError('sampler and explicit steady contract must be configured together')
+        if self.sched_switch and (self.sampler is None or self.sampler.proc_root!='/proc'):
+            raise ValueError('sched_switch requires local /proc inventory and sampler')
         return self
 
 
@@ -197,12 +218,16 @@ class CollectorResourceSampler(ResourceSampler):
     """Refresh only collector-specified process identities before each sample."""
     def __init__(self,*args,collector_binding,case,inventory,**kwargs):
         self.collector_binding=collector_binding;self.case=case;self.inventory_binding=inventory
+        self.refresh_provider=None
         self.collector_state_path=Path(args[1]).with_suffix('.collector.json')
         super().__init__(*args,**kwargs)
 
     def sample_once(self):
         try:
             binding=self.collector_binding
+            if binding.discovery is not None:
+                if self.refresh_provider is None:raise ValueError('scoped discovery provider missing')
+                self.refresh_provider()
             doc,sha=_scoped_document(binding.snapshot_path,self.case.environment_ref)
             for key in ('node','boot_id','inventory_ref'):
                 if doc.get(key)!=self.inventory_binding[key]:raise ValueError('dynamic inventory scope mismatch')
@@ -253,6 +278,8 @@ def configured_session(case,config,folder):
     if case.method_id=='B08.PUBLISHED' and (wiring is None or wiring.source is None):
         raise ValueError('snapshot publication requires an explicit source observer')
     if wiring is None:return BenchSession(case,config,folder)
+    if wiring.sampler and wiring.sampler.discovery and (wiring.cohort is None or wiring.sampler.discovery.product!=case.product):
+        raise ValueError('runtime discovery requires matching product and scoped cohort')
     if wiring.sampler and case.resources is None:
         raise ValueError('sampler requires a case resource contract')
     if wiring.cohort and not case.method_id.startswith(('B09.','B10.')):
@@ -355,10 +382,55 @@ def configured_session(case,config,folder):
             clock_ticks=binding.clock_ticks,max_pending=binding.max_pending,clock_domain=domain,run_id=case.work_id,**dynamic)
     else:domain=None
     try:
-        session=BenchSession(case,config,folder,sampler=sampler,clock_domain=domain,scenario_options=options)
+        sched=None
+        if wiring.sched_switch:
+            from .sched_peak import BpfSchedSwitchCollector
+            from .sched_observation import SchedObservation
+            collector=BpfSchedSwitchCollector(run_id=case.work_id,clock_domain='bpf:ktime:'+boot)
+            sched=SchedObservation(collector,inventory=lambda:sampler.inventory)
+        session=BenchSession(case,config,folder,sampler=sampler,clock_domain=domain,scenario_options=options,
+            sched_observer=sched)
     except BaseException:
         if sampler:sampler.close()
         raise
+    if wiring.sampler and wiring.sampler.discovery:
+        from sandbox_graph.environment.probes.discovery import refresh_snapshot
+        discovery=wiring.sampler.discovery
+        machine_id=Path(discovery.machine_id_file).read_text().strip()
+        if not machine_id:raise ValueError('discovery machine identity missing')
+        def refresh_runtime_inventory():
+            # Read-only API discovery runs in the existing sampler executor, so
+            # its deadline and shutdown are covered by N04/N07's original owner.
+            started=time.monotonic();deadline=started+case.resources.max_gap_s
+            def remaining():
+                seconds=deadline-time.monotonic()
+                if seconds<=0:raise TimeoutError('cohort discovery deadline')
+                return min(seconds,case.completion.timeout_s)
+            if Path(discovery.machine_id_file).read_text().strip()!=machine_id:
+                raise ValueError('discovery machine identity changed')
+            current_boot=(Path(wiring.sampler.proc_root)/'sys/kernel/random/boot_id').read_text().strip()
+            if current_boot!=boot:raise ValueError('discovery boot changed')
+            handles=session.adapter.list_owned(case.work_id,remaining());ids=[]
+            if len(handles)>10000:raise ValueError('cohort discovery count budget')
+            for handle in handles:
+                row=session.adapter.info(handle,remaining());node=row
+                for key in wiring.cohort.node_field.split('.'):
+                    node=node.get(key) if isinstance(node,dict) else None
+                if node!=wiring.cohort.node:raise ValueError('discovery placement differs')
+                if row.get('metadata',{}).get('run_id')!=case.work_id:raise ValueError('discovery ownership differs')
+                # Starting/paused instances are retained: missing processes are
+                # explicit gaps, never a zero-cost or fabricated ready sample.
+                if row.get('state') not in {'running','paused','starting','creating'}:
+                    raise ValueError('unresolved cohort state')
+                ids.append(handle['sandbox_id'])
+            snapshot=refresh_snapshot(product=discovery.product,roles=discovery.roles,
+                runtime_root=discovery.runtime_root,proc_root=wiring.sampler.proc_root,
+                machine_id=machine_id,boot_id=boot,context={'environment_ref':case.environment_ref,
+                    'node':inventory['node'],'inventory_ref':inventory['inventory_ref'],'work_id':case.work_id,'cohort_ids':ids},
+                output=wiring.sampler.snapshot_path)
+            remaining()
+            return snapshot
+        sampler.refresh_provider=refresh_runtime_inventory
     if wiring.probe:atomic_json(folder/'provider_evidence'/'guest_before.json',proof)
     if inventory is not None:atomic_json(folder/'provider_evidence'/'inventory.json',inventory)
     if wiring.source_cleanup:

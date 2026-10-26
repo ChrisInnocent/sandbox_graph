@@ -8,7 +8,7 @@ from uuid import uuid4
 from langgraph.graph import END
 from ..domain.models import NodeResult,ErrorRecord,DeliveryManifest,EvidenceRef,canonical_hash
 from .reviews import ReanalysisBudgetExhausted
-from ..planning.compiler import Plan
+from ..planning.measurement_generation import load_plan
 from ..persistence.repository import LeaseToken,Conflict
 from ..runtime.tasks import TaskBackend,JobSpec
 from ..runtime.waits import WaitService,WaitRecord
@@ -23,10 +23,11 @@ def blocked(code,message,scope=()):
 def token_for(context): return LeaseToken(context.thread_id,context.owner_epoch,context.lease_id,0)
 
 class WorkflowHandlers:
-    def __init__(self,repository,*,deadline,node_services=None,review_service=None,max_work_concurrency=1,max_analysis_revisions=5):
+    def __init__(self,repository,*,deadline,node_services=None,review_service=None,max_work_concurrency=1,max_analysis_revisions=5,environment_gate=None):
         self.repository=repository;self.deadline=deadline;self.node_services=dict(node_services or {});self.review_service=review_service;self.max_work_concurrency=max_work_concurrency
         self.max_analysis_revisions=max_analysis_revisions
         self.scheduler=SchedulingService(repository,review_service=review_service)
+        self.environment_gate=environment_gate
     def mapping(self):
         handlers={'R0':self.restore_run,'R1':self.validate_catalog,'RP':self.restore_plan,'R2':self.dispatch_groups,'R3':self.ingest_deliveries,'R6':self.compile_rework,'R7':self.park_run,
                   'G0':self.restore_group,'T0':self.bind_methods,'T1':self.expand_work,'T4':self.schedule_work,'T5':self.dispatch_work,'T6':self.review_work,'T8':self.summarize_group,'TC':self.record_unsupported,'TB':self.record_gap,'GB':self.record_block,'GW':self.park_group,'GE':self.publish_group,
@@ -41,7 +42,7 @@ class WorkflowHandlers:
         with self.repository.transaction() as tx:
             row=tx.get('plans',context.plan_ref)
             if not row: raise Conflict('plan not found')
-            return Plan.model_validate(row['body'])
+            return load_plan(row['body'])
     async def restore_run(self,context):
         with self.repository.transaction() as tx:
             row=tx.get('runs',context.run_ref)
@@ -114,6 +115,10 @@ class WorkflowHandlers:
         return NodeResult(execution_status='succeeded',continuation='T6' if work and all(w['status'] in {'delivered','blocked','failed','cancelled','superseded'} for w in work) else 'E1')
     async def bind_methods(self,context):
         cases=[c for c in self._plan(context).cases if c.group_id==context.scope]
+        if any(c.environment_ref.startswith('environment-acceptance:') for c in cases):
+            if self.environment_gate is None:return blocked('ENVIRONMENT_ACCEPTANCE_REQUIRED','environment evidence verifier is not configured')
+            try:await self.environment_gate.check(context,cases)
+            except (ValueError,PermissionError,OSError):return blocked('ENVIRONMENT_ACCEPTANCE_INVALID','fresh environment verification failed')
         if all(c.capability=='unsupported' for c in cases): return NodeResult(execution_status='succeeded',continuation='TC',coverage_status='unsupported')
         if not any(c.capability=='supported' and c.adapter_verified for c in cases): return blocked('ADAPTER_UNVERIFIED','method adapter not verified')
         return NodeResult(execution_status='succeeded',continuation='T1',output={'methods':[c.method_id for c in cases]})
@@ -147,8 +152,11 @@ class WorkflowHandlers:
         if self.review_service is None: return blocked('ADAPTER_MISSING','artifact review service missing')
         from ..domain.models import DeliveryManifest
         reviews=[self.review_service.review_delivery(DeliveryManifest.model_validate(row),expected_scope=row['scope'],plan_ref=context.plan_ref,contract_ref=row['contract_ref']) for row in rows]
+        from .delivery_rework import DeliveryReworkService
+        with self.repository.transaction() as tx:
+            rework_refs=DeliveryReworkService.record_in(tx,context,rows,reviews,token=token_for(context))
         self._record_dispositions(context,work,rows,reviews)
-        return NodeResult(execution_status='succeeded',review_status='rejected' if gaps or any(r['decision']=='rejected' for r in reviews) else 'accepted',output={'review_refs':[r['review_id'] for r in reviews],'gaps':gaps})
+        return NodeResult(execution_status='succeeded',review_status='rejected' if gaps or any(r['decision']=='rejected' for r in reviews) else 'accepted',output={'review_refs':[r['review_id'] for r in reviews],'gaps':gaps,'rework_refs':rework_refs})
     def _record_dispositions(self,context,work,deliveries,reviews):
         """Deterministic terminal-review:1 closes this delivery with explicit gaps.
 
@@ -244,7 +252,7 @@ class WorkflowHandlers:
             group_identity=f'group:{context.run_ref}:{context.scope}'
             prior=tx.get('group_versions',group_identity)
             version=prior['body']['version']+1 if prior else 1
-            plan=Plan.model_validate(tx.get('plans',context.plan_ref)['body'])
+            plan=load_plan(tx.get('plans',context.plan_ref)['body'])
             manifest=DeliveryManifest(delivery_id=group_identity,version=version,scope=context.scope,plan_ref=context.plan_ref,contract_ref=plan.contract_ref,work_refs=tuple(summary['work_refs']),evidence=tuple(evidence.values()),result=NodeResult(execution_status='succeeded',data_status=data,cleanup_status=cleanup,performance_status=performance,coverage_status='unsupported' if unsupported else 'completed' if not gaps else 'blocked',output={'child_delivery_refs':list(summary['deliveries']),'coverage':summary['coverage']}),gaps=tuple(gaps))
             key=f'{group_identity}:{version}'
             tx.put('group_deliveries',key,manifest.model_dump(mode='json'),immutable=True)

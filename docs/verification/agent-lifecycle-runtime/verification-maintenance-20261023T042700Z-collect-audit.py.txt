@@ -1,0 +1,131 @@
+"""One-shot local collection evidence; not a trusted gate runner or manifest."""
+from collections import Counter
+from contextlib import redirect_stdout, redirect_stderr
+from datetime import datetime, timezone
+import hashlib
+import io
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import sys
+import subprocess
+from types import SimpleNamespace
+
+import pytest
+
+ROOT = Path.cwd()
+PREFIX = 'verification-maintenance-20261023T042700Z'
+DEST = ROOT / 'docs/verification/agent-lifecycle-runtime'
+DEST.mkdir(parents=True, exist_ok=True)
+UNIT = 'tests/orchestration/unit/'
+GRAPH = 'tests/orchestration/graphs/'
+files = sorted({
+    *[str(p.relative_to(ROOT)) for p in (ROOT / UNIT).glob('test_lifecycle_*.py')],
+    *[UNIT + f'test_{name}.py' for name in ('evolution_models', 'repair_catalog',
+        'repair_execution', 'recovery_plan', 'remedy_leases', 'remediation_requests',
+        'review_supervision', 'agent_bridge', 'remediation', 'verify_planning')],
+    *[GRAPH + f'test_{name}.py' for name in ('work_remediation', 'work_recovery', 'work_safety')],
+})
+missing_design_paths = [UNIT + f'test_{name}.py' for name in (
+    'remediation_policy', 'resource_disposition', 'agent_bridge_contract', 'agent_team',
+    'change_proposals', 'candidate_revisions', 'gate_policy', 'gate_results', 'promotion_policy')]
+missing_design_paths += [
+    'tests/orchestration/graphs/test_candidate_evolution.py',
+    'tests/orchestration/persistence/test_lifecycle_transactions.py',
+    'tests/orchestration/persistence/test_candidate_activation.py',
+    'tests/orchestration/recovery/test_remediation_recovery.py',
+    'tests/orchestration/integration/test_candidate_isolation.py',
+    'tests/orchestration/integration/test_host_agent_bridge.py',
+    'tests/orchestration/e2e/test_agent_evolution.py',
+]
+
+
+def audit_collection(actual, expected):
+    """Both inputs must be nonempty, unique and exactly equal as sets."""
+    if not actual or not expected:
+        raise ValueError('empty collection or reference')
+    if len(actual) != len(set(actual)) or len(expected) != len(set(expected)):
+        raise ValueError('duplicate nodeid')
+    if set(actual) != set(expected):
+        raise ValueError('missing or unexpected nodeid')
+
+
+negative_checks = []
+for label, actual, expected in [
+    ('empty', [], ['case[a]']),
+    ('duplicate', ['case[a]', 'case[a]'], ['case[a]']),
+    ('missing-parameter', ['case[a]'], ['case[a]', 'case[b]']),
+    ('unexpected', ['case[a]', 'case[b]'], ['case[a]']),
+]:
+    try:
+        audit_collection(actual, expected)
+    except ValueError:
+        negative_checks.append({'case': label, 'rejected': True})
+    else:
+        raise AssertionError('invalid collection was accepted: ' + label)
+
+
+args = ['--collect-only', '-q', '--strict-markers', *files]
+argv = [sys.executable, '-m', 'pytest', '-p', 'agent_lifecycle_collect_plugin_20261023', *args]
+env = dict(os.environ, PYTHONPATH='/tmp:' + str(ROOT) + ':' + os.environ.get('PYTHONPATH', ''),
+    LIFECYCLE_COLLECT_ITEMS_PATH='/tmp/agent-lifecycle-collected-items-20261023.json')
+process = subprocess.run(argv, cwd=ROOT, env=env, capture_output=True, text=True)
+code = process.returncode
+output = process.stdout + process.stderr
+log = DEST / (PREFIX + '-collect.txt')
+with log.open('x') as stream:
+    stream.write(output)
+if code:
+    raise SystemExit(code)
+plugin = SimpleNamespace(items=json.loads(Path(env['LIFECYCLE_COLLECT_ITEMS_PATH']).read_text()))
+nodeids = [item['nodeid'] for item in plugin.items]
+printed = [line for line in output.splitlines() if line.startswith('tests/') and '::' in line]
+audit_collection(nodeids, printed)
+
+# Independent literal reference for the newly added parameterized cases only.
+# Full future G1 required identities remain a 47.* deliverable.
+required = [UNIT + 'test_verify_planning.py::test_accepts_any_nonempty_unique_well_formed_task_set[' + p + ']'
+    for p in ['one', 'historical-96', 'current-209']]
+required += [UNIT + 'test_verify_planning.py::test_rejects_empty_or_duplicate_tasks[' + p + ']'
+    for p in ['empty', 'heading-only', 'duplicate-id']]
+required += [UNIT + 'test_verify_planning.py::test_rejects_malformed_checkbox_in_otherwise_valid_tasks[' + p + ']'
+    for p in ['uppercase', 'unknown-state', 'missing-state', 'missing-subtask',
+        'missing-description', 'blank-description', 'missing-separator', 'indented']]
+required += [UNIT + 'test_verify_planning.py::test_retains_link_openspec_and_registry_constraints[' + p + ']'
+    for p in ['broken-link', 'strict-failure', 'node-count']]
+required += [UNIT + 'test_lifecycle_schema_compatibility.py::test_new_contracts_reject_future_versions_and_unknown_grants['
+    + patch + '-' + model + ']' for patch in ['future-version', 'bool-version', 'string-version',
+        'unknown-authority', 'unknown-disposition'] for model in ['record', 'event', 'context', 'evolution-proposal']]
+required += [UNIT + 'test_lifecycle_schema_compatibility.py::test_offline_context_requires_explicit_mode_and_has_no_live_authority['
+    + p + ']' for p in ['offline-with-live-proof', 'offline-with-tool', 'implicit-offline']]
+new_parameterized = [item['nodeid'] for item in plugin.items
+    if item['parameter_id'] is not None and item['nodeid'].split('::')[0] in {
+        UNIT + 'test_verify_planning.py', UNIT + 'test_lifecycle_schema_compatibility.py'}]
+audit_collection(new_parameterized, required)
+counts = dict(sorted(Counter(node.split('::')[0] for node in nodeids).items()))
+record = {'record_kind': 'local_collection_inventory', 'recorded_at': datetime.now(timezone.utc).isoformat(),
+    'python': sys.executable, 'cwd': str(ROOT),
+    'argv': argv, 'pytest_exit_code': code,
+    'collection_observer_plugin': '/tmp/agent_lifecycle_collect_plugin_20261023.py',
+    'observer_plugin_sha256': hashlib.sha256(Path('/tmp/agent_lifecycle_collect_plugin_20261023.py').read_bytes()).hexdigest(),
+    'scope': 'Implemented lifecycle increment only; collection is not execution or complete G1 acceptance.',
+    'collected_count': len(nodeids), 'unique_count': len(set(nodeids)),
+    'parameterized_count': sum(item['parameter_id'] is not None for item in plugin.items),
+    'new_literal_parameter_reference_count': len(required),
+    'new_parameter_reference_matches': True, 'stdout_and_hook_inventory_match': True,
+    'negative_audit_checks': negative_checks, 'per_file_counts': counts,
+    'design_target_status': [{'path': p, 'exists': (ROOT / p).exists(),
+        'note': 'Name absent does not imply behavior absent; related existing tests may cover part. Full gate scope is not implemented.'}
+        for p in missing_design_paths],
+    'full_G1_acceptance': False, 'items': plugin.items,
+    'source_hashes': {path: hashlib.sha256((ROOT / path).read_bytes()).hexdigest()
+        for path in [*files, 'tests/orchestration/conftest.py', 'scripts/verify_planning.py']}}
+with (DEST / (PREFIX + '-collection.json')).open('x') as stream:
+    json.dump(record, stream, indent=2, ensure_ascii=False)
+    stream.write('\n')
+with (DEST / (PREFIX + '-planning.json')).open('x') as stream:
+    stream.write(Path('/tmp/agent-lifecycle-verification-planning-20261023.json').read_text())
+print(json.dumps({key: record[key] for key in ('collected_count', 'unique_count',
+    'parameterized_count', 'new_literal_parameter_reference_count', 'per_file_counts')}, indent=2))

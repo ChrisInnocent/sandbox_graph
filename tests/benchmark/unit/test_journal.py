@@ -1,5 +1,6 @@
 import importlib.util
 import pytest
+import json
 
 
 def cls():
@@ -36,3 +37,37 @@ def test_identity_conflict_receipts_and_scope_cleanup(tmp_path):
     events=j.collect(0)
     assert len({x['event_id'] for x in events})==len(events)
     assert j.collect(events[-1]['seq'])==[]
+
+
+@pytest.mark.parametrize('child', [False, True])
+def test_large_terminal_evidence_is_durable_without_rewriting_raw_in_ledger(tmp_path, child):
+    import asyncio
+    Journal=cls();j=Journal(tmp_path,'work',child_budget=2,parent_budget=2)
+    token=j.reserve_sync(0);j.submission_started_sync(token)
+    result={'status':'success','value':{'raw_log':'raw-evidence\n'*100000}}
+    def record():
+        if child:asyncio.run(j.record_child_terminal(token,0,result,1.0))
+        else:j.terminal_sync(token,result)
+    record()
+    assert j.path.stat().st_size < 65536
+    stored=json.loads(j.path.read_text())['operations'][token]
+    stored=stored['children']['0'] if child else stored
+    ref=stored['result_ref']
+    blob=tmp_path/'results'/f"{ref['sha256']}.json"
+    original=blob.read_bytes()
+    assert json.loads(original)==result
+    # Ordinary budget writes and idempotent terminal replay keep immutable evidence.
+    j.reserve_sync(1);record()
+    assert blob.read_bytes()==original
+    reopened=Journal(tmp_path,'work',child_budget=2,parent_budget=2)
+    operation=reopened.operation(token)
+    assert (operation['children']['0'] if child else operation)['result']==result
+    event=next(e for e in reopened.collect() if e['kind']==('child_terminal' if child else 'terminal'))
+    assert event['result']==result
+    assert j.path.stat().st_size < 65536
+    with pytest.raises(ValueError,match='conflicting'):
+        if child:asyncio.run(j.record_child_terminal(token,0,{'status':'failed'},1.0))
+        else:j.terminal_sync(token,{'status':'failed'})
+    blob.write_bytes(b'{}')
+    with pytest.raises(ValueError,match='evidence'):
+        reopened.state()

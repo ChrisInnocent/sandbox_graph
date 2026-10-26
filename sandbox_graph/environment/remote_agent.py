@@ -76,8 +76,53 @@ class RemoteAgent:
             return self._probe_access(data)
         if action == "probe.host.v1":
             return self._probe_host(data)
+        if action == 'probe.ublk.v1':
+            if data:raise RemoteAgentError('ublk probe takes no caller paths or commands')
+            from .probes.ublk import inspect_ublk
+            return inspect_ublk()
+        if action == 'probe.product.v1':
+            if set(data)!={'product','roles','paths','expected_hashes'}:
+                raise RemoteAgentError('product probe input is invalid')
+            from .products.probe import probe_product
+            return probe_product(data['product'],roles=tuple(data['roles']),paths=data['paths'],
+                expected_hashes=data['expected_hashes'])
+        if action == 'probe.configuration.v1':
+            if set(data)!={'product','roles','paths'}:
+                raise RemoteAgentError('configuration probe input is invalid')
+            from .probes.configuration import inspect_configuration
+            return inspect_configuration(data['product'],roles=tuple(data['roles']),paths=data['paths'],proc_root=self.proc_root)
+        if action == 'probe.inventory.runtime.v1':
+            if set(data)!={'product','roles','runtime_root','cohort_ids'}:raise RemoteAgentError('exact runtime discovery input required')
+            from dataclasses import asdict
+            from .probes.discovery import discover
+            value=discover(**data,proc_root=self.proc_root,machine_id=self._machine_id(),boot_id=self._boot_id())
+            return value|{'inventory':asdict(value['inventory']),'machine_id':self._machine_id(),'boot_id':self._boot_id()}
+        if action == 'probe.inventory.v1':
+            if set(data)!={'product','roles'}:raise RemoteAgentError('inventory probe input is invalid')
+            from .probes.inventory import product_inventory
+            return product_inventory(data['product'],tuple(data['roles']),proc_root=self.proc_root,
+                machine_id=self._machine_id(),boot_id=self._boot_id())
         if action == "ssh.authorized_key.inspect.v1":
             return self._inspect_authorized_key(data)
+        if action == 'operation.logs.read.v1':
+            if self.journal is None:raise RemoteAgentError('original journal required')
+            from .log_export import read_chunk
+            return read_chunk(self.journal,data)
+        if action == 'operation.journal.query.v1':
+            if self.journal is None or set(data)!={'operation_id'}:
+                raise RemoteAgentError('original operation identity required')
+            row=self.journal.get(data['operation_id'])
+            return {'observation':row,'machine_id':self._machine_id(),'boot_id':self._boot_id()}
+        if action in {'operation.recipe.cancel.v1','operation.recipe.compensate.v1'}:
+            self._require_grant(action,request.get('grant'),data)
+            if self.journal is None or set(data)!={'operation_id','input_hash'}:
+                raise RemoteAgentError('original recipe operation identity required')
+            from .owned_execution import cancel_original,compensate_original
+            options=dict(journal=self.journal,operation_id=data['operation_id'],input_hash=data['input_hash'],
+                lock_dir=self.home/'.local/state/sandbox-graph/locks')
+            if action=='operation.recipe.cancel.v1':row=cancel_original(**options)
+            else:row=compensate_original(**options,backup_dir=self.home/'.local/state/sandbox-graph/private-backups')
+            return {'observation':row,'machine_id':self._machine_id(),'boot_id':self._boot_id()}
         if action == "operation.journal.accept.v1":
             self._require_grant(action, request.get("grant"), data)
             if self.journal is None or set(data) != {"operation_id", "action", "input"} or not isinstance(data["input"], dict):
@@ -135,7 +180,10 @@ class RemoteAgent:
         facts = collect_host_facts(proc_root=self.proc_root, sys_root=self.sys_root, dev_root=self.dev_root)
         from dataclasses import asdict
         from .probes.host import assess_role
-        return {"facts": asdict(facts), "role": assess_role(role, facts)}
+        assessed=assess_role(role,facts)
+        assessed['checks']={key:asdict(value) for key,value in assessed['checks'].items()}
+        assessed['kvm']=asdict(assessed['kvm'])
+        return {"facts": asdict(facts), "role": assessed}
 
     def _ensure_authorized_key(self, data: dict) -> dict[str, Any]:
         required = {"node_id", "machine_id", "public_key", "expected_fingerprint",
@@ -214,19 +262,56 @@ class RemoteAgent:
                 "authorized_keys_sha256": hashlib.sha256(contents).hexdigest() if target.exists() else None}
 
 
-def main() -> int:
-    if sys.argv[1:] != ["--stdio-json"]:
+def serve_granted(handshake,source,sink):
+    """JSON lines with a finite challenge wait; lock remains held across both frames."""
+    import select
+    import time
+    def read():
+        raw=source.readline(1_048_577)
+        if not raw.endswith(b'\n') or len(raw)>1_048_576:raise RemoteAgentError('invalid protocol frame')
+        return json.loads(raw,object_pairs_hook=_unique_pairs)
+    def write(value):
+        sink.write(json.dumps(value,sort_keys=True,separators=(',',':'),allow_nan=False).encode()+b'\n');sink.flush()
+    request=read()
+    if not isinstance(request,dict) or set(request)!={'action','input'} or request['action']!='product.recipe.step.v1':
+        raise RemoteAgentError('unregistered granted action')
+    with handshake.prepare(request['input']) as prepared:
+        if prepared.observation is not None:
+            write({'observation':prepared.observation});return
+        write({'challenge':prepared.challenge})
+        remaining=prepared.deadline-handshake.monotonic()
+        if remaining<=0 or not select.select([source],[],[],remaining)[0]:raise RemoteAgentError('challenge expired')
+        response=read()
+        if not isinstance(response,dict) or set(response)!={'grant'}:raise RemoteAgentError('execution grant required')
+        write({'observation':prepared.execute(response['grant'])})
+
+
+def bootstrap_check(configuration_root):
+    """Import actual execution dependencies and validate the staged private config."""
+    from .recipe_catalog import load_recipe_catalog
+    from .products.executor import RecipeExecutor
+    from .handshake import RecipeHandshake
+    root=Path(configuration_root)
+    if root.resolve()!=root or root.stat().st_mode&0o077:
+        raise RemoteAgentError('private canonical helper configuration required')
+    key=root/'execution-grant.key'
+    if key.is_symlink() or not key.is_file() or key.stat().st_uid!=os.geteuid() or key.stat().st_mode&0o077:
+        raise RemoteAgentError('private grant key required')
+    if not 32<=key.stat().st_size<=4096:raise RemoteAgentError('invalid grant key length')
+    load_recipe_catalog(root/'recipes.json')
+    return {'protocols':['stdio-json','stdio-grant-v1']}
+
+
+def main(*, configuration_root='/etc/sandbox-graph') -> int:
+    if sys.argv[1:] not in (["--stdio-json"],["--stdio-grant-v1"]):
         print(json.dumps({"error": "only --stdio-json is supported"}, separators=(",", ":")))
         return 2
-    payload = sys.stdin.buffer.read(1_048_577)
-    if len(payload) > 1_048_576:
-        print(json.dumps({"error": "request exceeds size limit"}, separators=(",", ":")))
-        return 2
     try:
-        request = json.loads(payload, object_pairs_hook=_unique_pairs)
         home = Path.home()
         machine_id_file = Path("/etc/machine-id")
-        verifier = load_execution_grant_verifier(home=home, machine_id_file=machine_id_file)
+        config=Path(configuration_root)
+        verifier = load_execution_grant_verifier(home=home, machine_id_file=machine_id_file,
+                                                key_file=config/'execution-grant.key')
         machine_id = machine_id_file.read_text(encoding="ascii").strip()
         try:
             boot_id = Path("/proc/sys/kernel/random/boot_id").read_text(encoding="ascii").strip()
@@ -234,6 +319,19 @@ def main() -> int:
             boot_id = None
         journal = OperationJournal(home / ".local/state/sandbox-graph/operations.json",
                                    machine_id=machine_id, boot_id=boot_id)
+        if sys.argv[1:]==['--stdio-grant-v1']:
+            from .recipe_catalog import load_recipe_catalog
+            from .products.executor import RecipeExecutor
+            from .handshake import RecipeHandshake
+            if verifier is None:raise RemoteAgentError('execution grant verifier is not installed')
+            executor=RecipeExecutor(load_recipe_catalog(config/'recipes.json'),journal=journal,
+                lock_dir=home/'.local/state/sandbox-graph/locks',backup_dir=home/'.local/state/sandbox-graph/private-backups',
+                authorize=lambda *_:False)
+            serve_granted(RecipeHandshake(executor,verifier,machine_id=machine_id,boot_id=boot_id),sys.stdin.buffer,sys.stdout.buffer)
+            return 0
+        payload=sys.stdin.buffer.read(1_048_577)
+        if len(payload)>1_048_576:raise RemoteAgentError('request exceeds size limit')
+        request=json.loads(payload,object_pairs_hook=_unique_pairs)
         result = RemoteAgent(home=home, machine_id_file=machine_id_file,
                              authorize=verifier.authorize if verifier else None,
                              journal=journal).dispatch(request)

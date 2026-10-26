@@ -9,8 +9,21 @@ from .planning.compiler import Case,Selection,PlanCompiler
 
 
 def main():
+    import sys
+    if sys.argv[1:2]==['env']:
+        from .environment.cli import main as environment_main
+        raise SystemExit(environment_main(sys.argv[2:]))
+    if sys.argv[1:2]==['eval']:
+        from .runtime.evaluation_cli import main as evaluation_main
+        raise SystemExit(evaluation_main(sys.argv[2:]))
+    if sys.argv[1:2]==['lifecycle']:
+        from .runtime.lifecycle_cli import main as lifecycle_main
+        raise SystemExit(lifecycle_main(sys.argv[2:]))
     parser=argparse.ArgumentParser(prog='python -m sandbox_graph')
     sub=parser.add_subparsers(dest='command',required=True)
+    sub.add_parser('env',help='environment check/plan/apply/worker/status/reconcile/report')
+    sub.add_parser('lifecycle',help='fenced lifecycle controls and fixed gate profiles')
+    sub.add_parser('eval',help='persistent benchmark plan/start/worker/status')
     sub.add_parser('catalog',help='show definitions and unverified adapter status')
     sub.add_parser('migrate',help='provision PostgreSQL ledger and saver tables')
     status=sub.add_parser('status');status.add_argument('run_id')

@@ -48,9 +48,21 @@ def _print(summary, out):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--out', type=Path, default=Path('local-mock-run'))
+    source=parser.add_mutually_exclusive_group()
+    source.add_argument('--case',type=Path,action='append',help='完整用例文件；显式矩阵展开后走真实图和合成产品 API')
+    source.add_argument('--profile', type=Path, default=None,
+                        help='外部条件文件（yaml/json）；给定则用它注入条件，不再用脚本默认值')
     args = parser.parse_args()
     out = args.out.resolve()
-    summary = asyncio.run(run_mock(out=out))
+    kwargs = {'case_files':args.case} if args.case else {}
+    if args.profile is not None:
+        from sandbox_bench.conditions import load_profile
+        profile = load_profile(args.profile)
+        kwargs = profile.mock_kwargs()
+        print(f'条件档: {profile.summary()}')
+        if profile.notes:
+            print(f'说明  : {profile.notes}')
+    summary = asyncio.run(run_mock(out=out, **kwargs))
     _print(summary, out)
 
 

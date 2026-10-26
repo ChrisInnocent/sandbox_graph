@@ -1,0 +1,26 @@
+{
+  "gate": "measurement-generation-local",
+  "passed": true,
+  "pytest_exit_code": 0,
+  "tests": 176,
+  "failed_error_or_skipped": 0,
+  "command": [
+    "/storage/Users/currentUser/IDEProjects/sandbox_graph/.venv/bin/python",
+    "-m",
+    "pytest",
+    "tests/orchestration/unit/test_measurement_generation.py",
+    "tests/orchestration/graphs/test_measurement_generation.py",
+    "tests/orchestration/unit/test_runner_protocol.py",
+    "tests/orchestration/unit/test_revision_drain.py",
+    "tests/orchestration/unit/test_revision_rollback.py",
+    "tests/orchestration/unit/test_report_closure.py",
+    "tests/orchestration/unit/test_review_closure_agents.py",
+    "tests/orchestration/unit/test_lifecycle_closure.py",
+    "tests/benchmark/integration/test_sampler_observation_bridge.py",
+    "-q",
+    "--tb=short",
+    "-o",
+    "addopts=--import-mode=importlib",
+    "--junitxml=/storage/Users/currentUser/IDEProjects/sandbox_graph/.worktrees/agent-lifecycle/artifacts/gates/measurement-generation/20261023T132821Z-1ff58b78/junit.xml"
+  ]
+}

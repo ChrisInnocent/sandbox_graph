@@ -3,13 +3,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import isfinite
+from fractions import Fraction
 from typing import Any, Mapping
 
 
 _UNIT_FACTORS = {
     "B": ("bytes", 1), "KiB": ("bytes", 1024), "MiB": ("bytes", 1024**2), "GiB": ("bytes", 1024**3),
     "mCPU": ("cpu", 1), "CPU": ("cpu", 1000),
-    "count": ("count", 1), "%": ("percent", 1), "requests/s": ("rate", 1),
+    "count": ("count", 1), "%": ("percent", 1), "ratio": ("ratio", 1), "requests/s": ("rate", 1),
     "seconds": ("time", 1), "ms": ("time", 0.001),
 }
 _MAX_FINITE_BUDGET = 10**12
@@ -54,7 +55,8 @@ def _convert(value: Any, source_unit: str, target_unit: str) -> float:
         raise ValueError("unit dimension mismatch")
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(value):
         raise ValueError("parameter value must be a finite number")
-    return float(value) * src_factor / dst_factor
+    converted=Fraction(str(value))*Fraction(str(src_factor))/Fraction(str(dst_factor))
+    return converted.numerator if converted.denominator==1 else float(converted)
 
 
 def _validate_value(rule: ParameterRule, value: float) -> float:

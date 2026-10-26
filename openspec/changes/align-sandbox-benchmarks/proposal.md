@@ -1,6 +1,6 @@
 # Proposal
 
-> 实施继续暂停。本文按最新需求同步节点职责与测量合同，不授权恢复提前产生的代码。统一依据为 [职责表](../sandbox-evaluation-workflow/node-automation.md)、[节点内部图](../sandbox-evaluation-workflow/node-workflows.md) 和 [场景合同](../sandbox-evaluation-workflow/test-nodes.md)。
+> 用户已授权设计、apply 及持续补齐；实施以父 change 的图与测试合同为准。统一依据为 [职责表](../sandbox-evaluation-workflow/node-automation.md)、[节点内部图](../sandbox-evaluation-workflow/node-workflows.md) 和 [场景合同](../sandbox-evaluation-workflow/test-nodes.md)。
 
 ## Why
 
@@ -16,7 +16,7 @@ AgentENV、CubeSandbox 与 Kuasar 的创建完成事件、密度计算和生命�
 - 本地合同测试与真实沙箱测试分别报告；缺少环境、模板或凭据时保持实际运行未完成，不以模拟数据充当性能结果。
 - 密度增加固定请求预算下的滑窗／分批不同并发对比，同步采集每秒创建吞吐、各角色／组件 PSS、CPU 时间与峰值，并使用同窗口真实 cohort 计算平均开销。
 
-以下工作均目标脚本化，当前统一执行链尚未验收：R1/T0 的版本与引用检查；N00–N03 的合同、对账、fixture 与预检；N04–N06 的采集、发压、观察和后验；N07–N10 的封存、计算、清理与交付；A1–A7/F1–F4 的确定性计算、事实装配与校验。逐节点 S/M/H 和内部流程见上述索引；模型保留新语义分析、未知异常诊断与报告解释，人工只决定未明确条件／范围。不能将本 proposal 或官方脚本视为实现完成证据。
+以下工作均目标脚本化，统一执行链已有本地合同验证，真实产品验收尚未完成：R1/T0 的版本与引用检查；N00–N03 的合同、对账、fixture 与预检；N04–N06 的采集、发压、观察和后验；N07–N10 的封存、计算、清理与交付；A1–A7/F1–F4 的确定性计算、事实装配与校验。逐节点 S/M/H 和内部流程见上述索引；模型保留新语义分析、未知异常诊断与报告解释，人工只决定未明确条件／范围。不能将本 proposal 或官方脚本视为实现完成证据。
 
 ## Capabilities
 

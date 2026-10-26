@@ -20,6 +20,10 @@ METHODS = (
     'E01', 'E02', 'E03', 'E04', 'E05', 'E06',
 )
 
+# A new method identity preserves historical creation semantics.
+METHODS += ('B01.TEMPLATE.HOLD','B01.SNAPSHOT.DISK.HOLD','B01.SNAPSHOT.MEMORY.HOLD',
+            'B02.FULL.HOLD','B02.PREPARED.HOLD')
+
 @dataclass(frozen=True)
 class NodeDefinition:
     node_id: str

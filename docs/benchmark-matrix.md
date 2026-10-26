@@ -37,3 +37,5 @@
 - **不同规格 / 并发 / 请求 / 端点 / 口径版本的样本不得混成一个时延或密度结论**（RT-19、RT-42、RT-47）。
 - 失败消耗请求预算，不补发到成功数；`insufficient`/`unavailable` 保留原样，不填零。
 - **现状**：`scripts/matrix_run.py` 用离线 mock 跑矩阵（合成样本，真图/真调度/真证据），仅验证**编排与分格**；真实数值需真实环境。mock 的合成模型当前只在 **C/Q** 上有区分，**规格轴无差异**（真实产品才会有）。
+
+完整矩阵输入现由 `config/case-matrix.yaml` 与 `sandbox_bench/casegen.py` 实现。生成、图执行和证据字段见 [完整用例使用说明](conditions-profile.md)。选择用例仍通过 Selection，条件组合通过 axes。

@@ -90,3 +90,11 @@ Case.environment_ref可显式声明；同组多个非空引用冲突拒绝，Sch
 配置步骤C1按冻结Plan预约conflict_domains，LeaseService.acquire_all可选owner_run_id阻止跨run同名scope复用锁。C3独立复检且明确completed operation才允许release(operation_refs,owner_run_id)，operation核验与释放同事务。release发布resource_domains_available outbox，Worker按Plan域交集持久通知相关group，登记等待前发生的释放同样可被recheck读取。WorkGraph编译要求全部N00–N10 handler存在，缺清理adapter提前拒绝。
 
 Case的部署默认值为capability=unverified、adapter_verified=false；单独填写方法目录和条件不能解锁真实执行。只有显式已核验声明可进入受支持路径，合成测试也必须显式声明。
+
+## 节点生命周期合同（2026-10-22 增量）
+
+纯模型与事件转换已分离到 [lifecycle-contracts.md](lifecycle-contracts.md)。这些类型描述 phase/CAS/预算/停止原因/恢复引用，不代表持久生命周期服务、授权或模型接入已经完成。正式调用者须在事务内核验数据库事实并构造 guards，模型的布尔声明不能直接作为 guards。
+
+RemedyJobHandler 的 job claim 与 thread lease 分别校验；线程 lease_id 必须来自仓储分配。任务失去 claim 或线程失去 fence 后，禁止写 node receipt、修复 outcome 或继续任务；取消/异常仅释放仍归自己的线程租约。独立 NodeReview.reject 与 NodeResult.review_status=rejected 都触发监督记录，原 NodeResult 不改写。
+
+生命周期服务的持久化、事务派发及原图互斥实现见 [持久记录说明](lifecycle-persistence.md)，现代修复执行见 [动作执行说明](repair-execution.md)。这些模块的存在不代表 43–49 的完整循环或真实后端验收已完成。

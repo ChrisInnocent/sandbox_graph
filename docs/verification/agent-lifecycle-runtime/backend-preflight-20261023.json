@@ -1,0 +1,53 @@
+{
+  "observed_at": "2026-10-23T04:50:15.133812+00:00",
+  "system": "Linux",
+  "tool_discovery": [
+    {
+      "tool": "docker",
+      "path": null
+    },
+    {
+      "tool": "podman",
+      "path": null
+    },
+    {
+      "tool": "psql",
+      "path": null
+    },
+    {
+      "tool": "postgres",
+      "path": null
+    },
+    {
+      "tool": "bwrap",
+      "path": "/storage/Users/currentUser/.harmonybrew/bin/bwrap"
+    },
+    {
+      "tool": "unshare",
+      "path": "/storage/Users/currentUser/.harmonybrew/bin/unshare"
+    }
+  ],
+  "probe": {
+    "argv": [
+      "/storage/Users/currentUser/.harmonybrew/bin/bwrap",
+      "--unshare-user",
+      "--unshare-pid",
+      "--unshare-net",
+      "--die-with-parent",
+      "--new-session",
+      "--ro-bind",
+      "/",
+      "/",
+      "--",
+      "/bin/true"
+    ],
+    "exit_code": 1,
+    "stdout": "",
+    "stderr": "bwrap: Unexpected capabilities but not setuid, old file caps config?\n"
+  },
+  "scope": "只验证命名空间启动能力，未执行候选；根只读挂载的探针不是部署隔离配置。",
+  "candidate_isolation": "blocked",
+  "g4_verified": false,
+  "postgres_verified": false,
+  "note": "未修改系统权限、文件caps或后端配置；命令未找到仅指当前PATH。未读取凭据或尝试连接数据库。"
+}

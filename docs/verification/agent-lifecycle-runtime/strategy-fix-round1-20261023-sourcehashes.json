@@ -1,0 +1,9 @@
+{
+  "docs/orchestration/lifecycle-supervision.md": "37591e0a2b83ab22c9ed6edad19d68e56b571ec58d5c6b8a27f41110a6396cd1",
+  "sandbox_graph/catalog/repair_actions.py": "96fe6b24bebfac3fa0e78e193f440bc5f7ae09e7d317ff084247d8364e14d2d7",
+  "sandbox_graph/domain/agent_lifecycle.py": "bebae06a5e1ae620af9fed8bcb7d0f9d89fc0de12c7abf84fa6ed7d05d535717",
+  "sandbox_graph/services/repair_outcomes.py": "203bdfb6e4fd5c2f0c2428c94ae9c989917d2c4e4794e85a5fecb3376e9292b7",
+  "sandbox_graph/services/repair_strategy.py": "b6163d6c21416e29ca36d82741617c6f8c5bdb0eff17788a1914253f4d3bdb80",
+  "tests/orchestration/graphs/test_work_strategy.py": "22f6608ec62dfd16ccfcb3e3596f657e606d988fc2766790e4d488f42e909c08",
+  "tests/orchestration/unit/test_repair_strategy.py": "40a2ad42a71384227f4e4af8e97d0bcfd19a0aca2b2c9a3d6fb5f92a17163aa8"
+}

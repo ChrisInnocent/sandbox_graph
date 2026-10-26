@@ -691,6 +691,33 @@ class Session:                      # 一个 run 内复用连接
 
 资源观测须覆盖 `N04 基线 → N06 稳态（`window_s` 内 ≥ `min_samples`）→ N07 关闭`，故选**长寿命场景**：基准 **`B09.IDLE`**（空闲净 PSS 稳态；配套 `B09.PLATFORM`/`B09.PAUSED`），备选 `B07.STEADY`、`E03.MIXED_SOAK`、`B10.FIXED_REQUESTS.WINDOW`。创建型 `B01.*`/`B02.*`（0.13–0.36s）**不产资源窗口**，其资源结果 SHALL 标 `insufficient_samples`/未验证，不得补零或从创建型凑资源结论；如需在创建型语义下测资源，须另设“创建后保持到窗口结束再删”的变体。口径区分（净底噪去 Guest OS / 每沙箱含 Guest OS）见 BCD-09、RT-49。
 
+### BCD-20 条件参数外部化（完整用例生成）
+
+把**整份用例**（含可调条件）从脚本硬编码解耦到单一外部文件：文件自包含、**无隐式基础用例**；用于把条件整体调低以验证图/循环打通，并保证可追溯。接 BCD-13（端点/拓扑）、BCD-15/16（指标/条件目录）、RT-19/44/45。
+
+#### 20.1 文件与模型
+
+`config/*.yaml`（或 `.json`）；生成器 `sandbox_bench/casegen.py`（严格模型，未知键拒绝）。字段为**完整用例**：
+`method_id / product / product_version / source{kind,id,digest,artifact_kind,launch_path,producer_step} / completion{endpoint,timeout_s,poll_interval_s} / spec / load{mode,concurrency,requests,run_timeout_s,…} / density? / background? / resources? / repeat_id / topology / ttl_s / cleanup_timeout_s / cache_profile / environment_ref / contract_ref / graph_ref / plan_ref / declared_metrics / declared_conditions / axes?`。
+
+规格标签 `NvMg`（`2v2g` = 2 vCPU / 2 GiB，或 `{vcpus,memory_gib}`）；一律拒绝 `2x2g`/`0v2g`/`v2g` 等。生成结果 SHALL 经既有 `CaseContract` 严格校验，**不得两处各写一套必填规则**。
+
+#### 20.2 语义与优先级
+
+- **完整生成**：文件即用例，**无 overlay、无隐式 base**；缺必填 → 报错；
+- **优先级**：文件为**唯一条件来源**，脚本不提供条件默认值；CLI 只用于指定文件、输出目录与可选档位；如需临时覆盖，须显式声明并计入证据，不得静默改条件；
+- 只描述**条件与用例形状**，不产出结论；缺数据仍记 `unavailable`。
+
+#### 20.3 接线
+
+- bench：由文件生成 `CaseContract` → 离线 `run_mock`／真实 `runner case`；字段对应 `scenario_spec.CONDITION_FIELDS`（`C-01/C-05/SP-01/TL-01/TL-02/EP-01/EP-02/…`）；
+- 图：条件经计划进入 dispatch 与工作节点（并发/密度/规格），使“调低条件”在图上真实生效；
+- 矩阵：`axes` 展开为多份用例（与 `Selection` 分离：Selection 选哪些，`axes` 定条件值）。
+
+#### 20.4 证据与可比性
+
+文件摘要 + 生成用例摘要 + 条件值 SHALL 随证据保存并进入可比性键（RT-19/RT-47 同构）；跨条件样本不得合并结论。
+
 ## Risks / Trade-offs
 
 - Python 发压／采样开销可能影响高并发 → 保存发生器指标、界限和实际负载；先证明正确，必要时替换底层引擎而不改数据合同。
@@ -699,6 +726,8 @@ class Session:                      # 一个 run 内复用连接
 - procfs 读取竞态与跨机时钟 → 身份双检、区间、覆盖和时钟域，禁止无依据补齐。
 
 ## Migration Plan
+
+文件账本 `FileJournal` 将超过 64 KiB 的单个终态结果写入私有 `ledger/results/<sha256>.json`，操作和事件保存长度/摘要引用。写入顺序为结果文件与目录持久化后再原子提交账本；读接口校验并展开，最终封存仍保留原始证据。历史内联结果可以直接读取，无需迁移；进程退出留下的未引用文件不代表请求成功，不能据此重复提交。恢复和备份必须复制完整 `ledger/`，不能只复制 `journal.json`。这减少热路径重复序列化，不消除账本随请求数增长的开销，也不把本地单宿主文件账本视作 PostgreSQL 多 worker 后端。
 
 按 tasks 从合同／oracle、transport、adapter、load、场景、观测／统计到真实接入逐组实施。保留既有草稿失败案例，逐条判定兼容或替换；方法／schema 改动升版本，历史日志原样保留。实现通过本地契约后才取得 environment_verified，真实环境值不由测试夹具填入。
 

@@ -37,6 +37,35 @@ def owner_agent_for(node_id: str, scope: str) -> str:
         return f'agent:node:{scope}:{node_id}'
     return agent_id_for(level, scope)
 
+def node_supervisor_for(node_id: str, scope: str, run_ref: str) -> str:
+    """独立节点监督身份；保留既有三级 owner，复用 NodeContext 身份规则。"""
+    if not node_id or not scope or not run_ref:
+        raise ValueError('node supervisor requires node, scope and run identity')
+    return 'node-supervisor:' + canonical_hash({
+        'run': run_ref, 'owner': owner_agent_for(node_id, scope), 'node': node_id})
+
+
+class LifecycleContextBuilder:
+    """现代 provider/监督入口的显式适配器；不调用 legacy AgentGateway。
+
+    服务对象由可信装配传入。模型只能消费 packet 和已授权的证据句柄，
+    不能传 fields、accessible_evidence、budget_usage 或处置布尔值。
+    """
+    def __init__(self, service):
+        self.service = service
+
+    def build(self, *, lifecycle_id, expected_revision, token, task_role='diagnosis',
+              evidence_mode='live'):
+        return self.service.build(lifecycle_id, expected_revision=expected_revision,
+            token=token, task_role=task_role, evidence_mode=evidence_mode)
+
+    def read_evidence(self, *, lifecycle_id, handle, offset, length, token,
+                      evidence_mode='live', expected_revision=None):
+        return self.service.read_evidence(lifecycle_id, handle, offset=offset,
+            length=length, token=token, evidence_mode=evidence_mode,
+            expected_revision=expected_revision)
+
+
 class ContextBudget(Model):
     max_input_bytes: int = Field(gt=0)
     max_output_bytes: int = Field(gt=0)
@@ -102,6 +131,11 @@ class AgentSupervisor:
 
 
 class AgentGateway:
+    """Legacy owner-review API; modern lifecycle providers use LifecycleContextBuilder.
+
+    Its context-hash accounting and resources_disposed flag are retained only
+    for existing callers, and are not a lifecycle authorization boundary.
+    """
     def __init__(self,repository,model,*,registered_actions): self.repository=repository; self.model=model; self.actions=set(registered_actions)
     def build_context(self,*,scope,node_id,fields,budget,allowed_fields):
         import json

@@ -15,6 +15,7 @@ test = ["pytest==9.1.1", "pytest-asyncio==1.4.0"]
 [project.scripts]
 sandbox-bench = "sandbox_bench.runner:main"
 sandbox-graph-remote-agent = "sandbox_graph.environment.remote_agent:main"
+sandbox-graph-env = "sandbox_graph.environment.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["sandbox_bench*", "sandbox_graph*"]
@@ -23,4 +24,4 @@ include = ["sandbox_bench*", "sandbox_graph*"]
 testpaths = ["tests"]
 addopts = "--import-mode=importlib"
 asyncio_mode = "auto"
-markers = ["postgres: requires a dedicated PostgreSQL database", "linux: requires Linux procfs/cgroup", "live: requires an explicitly supplied real environment", "b00_build: independent B00 build re-entry checks without shared DB/fault fixtures", "endpoint: independent endpoint topology/readiness checks without shared DB/fault fixtures", "restore: independent environment-restore checks without shared DB/fault fixtures"]
+markers = ["isolation: requires an explicitly provisioned isolated rootfs and namespaces", "postgres: requires a dedicated PostgreSQL database", "linux: requires Linux procfs/cgroup", "live: requires an explicitly supplied real environment", "b00_build: independent B00 build re-entry checks without shared DB/fault fixtures", "endpoint: independent endpoint topology/readiness checks without shared DB/fault fixtures", "restore: independent environment-restore checks without shared DB/fault fixtures"]

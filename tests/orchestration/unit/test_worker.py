@@ -230,3 +230,14 @@ def test_verified_cleanup_releases_reservation_leaving_no_residue(repository):
     with repository.transaction() as tx:
         assert tx.get('resource_leases','host') is None
         assert tx.scan('resource_leases')==[]
+
+
+def test_version_specific_worker_does_not_claim_other_job_kinds(repository):
+    run_record(repository);enqueue(repository,'work','foreign');enqueue(repository,'environment','environment')
+    async def finish(job):return {'execution_status':'succeeded'}
+    worker=Worker(repository,{'environment':finish},policy=WorkerPolicy(claim_seconds=30,job_seconds=20,
+        poll_seconds=1,accepted_job_kinds=('environment',)))
+    assert asyncio.run(worker.run_once())
+    with repository.transaction() as tx:
+        assert tx.get('jobs','foreign')['body']['status']=='pending'
+        assert tx.get('jobs','environment')['body']['status']=='complete'

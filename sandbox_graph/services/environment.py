@@ -2,7 +2,7 @@
 from typing import Literal,Protocol
 from ..domain.models import Model,NodeResult,Operation,canonical_hash
 from .workflows import blocked,token_for
-from ..planning.compiler import Plan
+from ..planning.measurement_generation import load_plan
 from ..runtime.leases import LeaseService
 from ..persistence.repository import Conflict
 
@@ -59,7 +59,7 @@ class EnvironmentHandlers:
             if snapshot.scope!=context.scope or snapshot.state!='drift' or not snapshot.authenticated or not snapshot.identity_confirmed: return blocked('CONTRACT_CONFLICT','configuration requires authenticated explicit differences')
             frozen=tx.get('plans',context.plan_ref)
             if not frozen: return blocked('INPUT_MISSING','frozen plan required for configuration domains')
-            cases=Plan.model_validate(frozen['body']).cases
+            cases=load_plan(frozen['body']).cases
             domains=sorted({domain for case in cases if case.group_id==context.scope for domain in case.conflict_domains})
             if not domains: return blocked('INPUT_MISSING','configuration conflict domains required')
             plan={'scope':context.scope,'run_id':context.run_ref,'plan_ref':context.plan_ref,'domains':domains,'snapshot_ref':snapshot_ref,'differences':list(snapshot.differences),'script_ref':self.script.model_dump(mode='json')}

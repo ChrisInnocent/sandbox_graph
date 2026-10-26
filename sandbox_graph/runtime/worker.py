@@ -12,25 +12,19 @@ from ..domain.models import Model,DeliveryManifest,canonical_hash
 from ..persistence.repository import Conflict,StaleOwner
 from .driver import Driver,Activation
 from .events import EventService,EventEnvelope
-from .tasks import TaskBackend,JobSpec
+from .tasks import TaskBackend,JobSpec,business_job_kind
 from ..catalog.registry import NODE_GROUPS
 
-
-def _next_work_node(node_id):
-    """工作节点链上的下一个节点；N10 之后为 None。"""
-    nodes=NODE_GROUPS['work']
-    if node_id not in nodes: return None
-    index=nodes.index(node_id)
-    return nodes[index+1] if index+1<len(nodes) else None
 
 class WorkerPolicy(Model):
     claim_seconds: float = Field(gt=0)
     job_seconds: float = Field(gt=0)
     poll_seconds: float = Field(gt=0)
     max_outbox_per_tick: int = Field(default=100,gt=0)
+    accepted_job_kinds: tuple[str,...]|None = None
 
 class GraphJobHandler:
-    def __init__(self,repository,graph_builder,saver_factory,handler_factory,*,lease_seconds,segment_seconds,owner='worker',delivery_finalizer=None,agent_allowlists=None):
+    def __init__(self,repository,graph_builder,saver_factory,handler_factory,*,lease_seconds,segment_seconds,owner='worker',delivery_finalizer=None,agent_allowlists=None,repair_catalog=None):
         self.repository=repository
         self.graph_builder=graph_builder
         self.saver_factory=saver_factory
@@ -40,18 +34,23 @@ class GraphJobHandler:
         self.owner=owner
         self.delivery_finalizer=delivery_finalizer
         self.agent_allowlists=dict(agent_allowlists or {})
+        self.repair_catalog=repair_catalog
     async def __call__(self,job):
         payload=job['payload']
-        activation=Activation(activation_id=job['activation_id'],run_id=job['run_id'],thread_id=job['thread_id'],scope=job['scope_ref'],plan_ref=payload['plan_ref'],graph_ref=payload['graph_ref'],input_refs={k:str(v) for k,v in payload.items() if k not in {'plan_ref','graph_ref','continuation_of','decision'}},lease_seconds=self.lease_seconds,segment_seconds=self.segment_seconds,continuation_of=payload.get('continuation_of'))
+        activation=Activation(activation_id=job['activation_id'],run_id=job['run_id'],thread_id=job['thread_id'],scope=job['scope_ref'],plan_ref=payload['plan_ref'],graph_ref=payload['graph_ref'],input_refs={k:str(v) for k,v in payload.items() if k not in {'plan_ref','graph_ref','continuation_of','decision','recovery_plan_ref'}},lease_seconds=self.lease_seconds,segment_seconds=self.segment_seconds,continuation_of=payload.get('continuation_of'),recovery_plan_ref=payload.get('recovery_plan_ref'))
         with self.repository.transaction() as tx:
+            if tx.get('run_generation_bindings',job['run_id']) and not job['job_kind'].startswith('measurement-v1:'):
+                raise Conflict('generation job requires versioned worker entry')
             tx.put('activation_jobs',activation.activation_id,{'job_kind':job['job_kind'],'run_id':job['run_id'],'job_id':job['job_id']},immutable=True)
-        driver=Driver(self.repository,{},self.saver_factory,self.graph_builder,self.owner,handler_factory=self.handler_factory,agent_allowlists=self.agent_allowlists)
+        driver=Driver(self.repository,{},self.saver_factory,self.graph_builder,self.owner,handler_factory=self.handler_factory,agent_allowlists=self.agent_allowlists,repair_catalog=self.repair_catalog)
         result=await driver.start(activation,decision=payload.get('decision'))
         return await self.finalize(job,result)
     async def finalize(self,job,result):
         statuses=[r['execution_status'] for r in result.get('results',{}).values()]
-        execution='blocked' if '__interrupt__' in result or 'blocked' in statuses else 'failed' if 'failed' in statuses else 'succeeded'
-        if job['job_kind']=='work' and '__interrupt__' not in result:
+        review_rejected = any(r.get('review_status') == 'rejected' or r.get('node_review_decision') == 'reject'
+                              for r in result.get('results', {}).values())
+        execution='blocked' if '__interrupt__' in result or 'blocked' in statuses or review_rejected else 'failed' if 'failed' in statuses else 'succeeded'
+        if Worker._job_kind(job['job_kind'])=='work' and '__interrupt__' not in result:
             manifest=None
             if self.delivery_finalizer:
                 manifest=await self.delivery_finalizer(job,result)
@@ -89,6 +88,10 @@ class GraphJobHandler:
                 key=f'{manifest.delivery_id}:{manifest.version}'
                 tx.put('work_deliveries',key,manifest.model_dump(mode='json'),immutable=True)
                 tx.put('work_delivery_owners',key,{'run_id':job['run_id'],'group_id':group,'work_id':job['scope_ref']},immutable=True)
+                tx.put('work_delivery_sources',key,{'schema_version':1,
+                    'job_id':job['job_id'],'activation_id':job['activation_id'],
+                    'delivery_hash':canonical_hash(manifest),
+                    'result_refs':dict(result.get('result_refs',{}))},immutable=True)
         return {'execution_status':execution,'graph_result':result,'activation_id':job['activation_id']}
 
 class ResumeJobHandler:
@@ -107,21 +110,38 @@ class ResumeJobHandler:
             handler=self.graph_handlers.get(Worker._job_kind(metadata['body']['job_kind']))
             if not isinstance(handler,GraphJobHandler):
                 return {'execution_status':'blocked','error':{'code':'ADAPTER_MISSING','reason':'original graph version handler unavailable'}}
-        driver=Driver(self.repository,{},handler.saver_factory,handler.graph_builder,handler.owner,handler_factory=handler.handler_factory,agent_allowlists=handler.agent_allowlists)
+        driver=Driver(self.repository,{},handler.saver_factory,handler.graph_builder,handler.owner,handler_factory=handler.handler_factory,agent_allowlists=handler.agent_allowlists,repair_catalog=handler.repair_catalog)
         result=await driver.resume(identity,decision=job['payload'].get('decision'))
         finalized=await handler.finalize(original['body'],result)
         return finalized|{'resumed_job_id':original['key']}
 
 class Worker:
-    def __init__(self,repository,handlers,*,policy:WorkerPolicy,owner='worker'):
+    def __init__(self,repository,handlers,*,policy:WorkerPolicy,owner='worker',lifecycle_supervisor=None,reconciliation=None,bundle_service=None,bundle_ref=None):
+        self.reconciliation=reconciliation or getattr(handlers.get('reconcile'),'service',None)
         self.repository=repository
         self.handlers=dict(handlers)
         self.policy=policy
         self.owner=owner
         self.tasks=TaskBackend(repository)
+        from ..services.lifecycle_stop_jobs import StopJobs
+        self.handlers.setdefault("lifecycle_stop",StopJobs(repository))
+        self.lifecycle_supervisor=lifecycle_supervisor or self.handlers.get('lifecycle')
+        if (bundle_service is None)!=(bundle_ref is None):raise ValueError('worker bundle service and identity must be supplied together')
+        self.bundle_service=bundle_service;self.bundle_ref=bundle_ref;self.bundle_token=None
+
+    def attest_bundle(self):
+        if self.bundle_service is None:return
+        ttl=min(60.,max(self.policy.claim_seconds,5.))
+        with self.repository.transaction() as tx:
+            if self.bundle_token is None:self.bundle_token=tx.acquire_thread('worker-bundle:'+self.owner,self.owner,ttl)
+            else:
+                try:tx.renew_thread(self.bundle_token,ttl)
+                except StaleOwner:self.bundle_token=tx.acquire_thread('worker-bundle:'+self.owner,self.owner,ttl)
+        self.bundle_service.register_ready(self.owner,self.bundle_ref,token=self.bundle_token,ttl=ttl)
 
     @staticmethod
     def _job_kind(kind):
+        kind=business_job_kind(kind)
         return {'graph:all':'run','graph:check':'run','graph:analysis':'analysis','graph:report':'report'}.get(kind,kind)
 
     def _notify_capacity_waiters(self,tx,job):
@@ -152,6 +172,14 @@ class Worker:
         jobrow=tx.get('jobs',body['job_id'])
         if not jobrow: raise Conflict('completion references missing job')
         job=jobrow['body']
+        from ..services.release_observation import ReleaseObservationService
+        ReleaseObservationService.observe_in(tx,job['run_id'])
+        from .lifecycle_supervisor import LifecycleSupervisor
+        LifecycleSupervisor.job_ended_in(tx,job)
+        from ..services.agent_team import AgentTeamService
+        AgentTeamService.job_ended_in(tx,job)
+        from ..services.lifecycle_reconciliation import LifecycleReconciliationService
+        LifecycleReconciliationService.job_ended_in(tx,job)
         kind=self._job_kind(job['job_kind'])
         if kind=='resume' and job.get('result',{}).get('resumed_job_id'):
             original=tx.get('jobs',job['result']['resumed_job_id'])
@@ -172,7 +200,19 @@ class Worker:
             aggregate=f'group:{job["run_id"]}:{group}'
             if work:
                 status='delivered' if job['status']=='complete' else job['status']
-                tx.put('work_instances',job['scope_ref'],work['body']|{'status':status,'result_ref':f'job:{job["job_id"]}'})
+                revision=tx.put('work_instances',job['scope_ref'],work['body']|{'status':status,'result_ref':f'job:{job["job_id"]}'})
+                facts=tx.get('work_safety_facts',job['scope_ref'])
+                activation=tx.get('activations',job['activation_id'])
+                # Completion changes metadata revision, not the ended attempt.
+                # Only carry forward facts produced by this exact activation;
+                # late delivery must not make a newer attempt look closed.
+                if (facts and activation and activation['body'].get('status')=='complete'
+                        and facts['body'].get('activation_id')==job['activation_id']
+                        and facts['body'].get('work_revision')==work['revision']
+                        and facts['body'].get('producer')=='work_runtime'
+                        and activation['body']['record']['scope']==job['scope_ref']
+                        and activation['body']['record']['run_id']==job['run_id']):
+                    tx.put('work_safety_facts',job['scope_ref'],facts['body']|{'work_revision':revision})
         else:
             aggregate=f'run:{job["run_id"]}'
         if kind=='work':
@@ -181,6 +221,8 @@ class Worker:
         seq=max((r['body']['aggregate_seq'] for r in events),default=0)+1
         event=EventEnvelope(event_id=identity,producer_scope=job['scope_ref'],producer_epoch=job['owner_epoch'],aggregate_id=aggregate,aggregate_seq=seq,run_ref=job['run_id'],plan_ref=job['payload'].get('plan_ref',''),graph_ref=job['payload'].get('graph_ref',''),kind=f'{kind}_completed',payload={'job_id':job['job_id'],'status':job['status'],'result_ref':f'job:{job["job_id"]}'})
         EventService.append_in(tx,event)
+        if kind=='work':
+            LifecycleSupervisor.completed_in(tx,job)
 
     def _enqueue_activation(self,tx,run_id,*,dedupe,payload,thread_id=None,scope=None,kind='run',deadline=None):
         if tx.get('job_dedupe',dedupe): return
@@ -212,7 +254,7 @@ class Worker:
             tx.put('waits',row['key'],body|{'status':'resumed','event_seq':seq})
 
     def _notify_resource_waiters(self,tx,identity,body):
-        from ..planning.compiler import Plan
+        from ..planning.measurement_generation import load_plan
         targets={}
         # Include registered groups before they park: release -> registration
         # must observe the same durable event as registration -> release.
@@ -227,8 +269,19 @@ class Worker:
             if parent: targets[(parent['body']['record']['run_id'],wait['scope'],wait['plan_ref'])]=wait['graph_ref']
         for (run_id,scope,plan_ref),graph_ref in targets.items():
             frozen=tx.get('plans',plan_ref)
-            if not frozen: continue
-            domains={domain for case in Plan.model_validate(frozen['body']).cases if case.group_id==scope for domain in case.conflict_domains}
+            if graph_ref=='environment:1':
+                frozen=tx.get('environment_plans',plan_ref)
+                if not frozen:continue
+                declaration=tx.get('environment_declarations',frozen['body']['declaration_hash'])
+                if not declaration:continue
+                domains={'host:'+node['machine_id'] for node in declaration['body']['nodes'] if node['node_id'] in frozen['body']['node_ids']}
+            else:
+                if not frozen: continue
+                try:
+                    plan=load_plan(frozen['body'])
+                except ValueError:
+                    continue
+                domains={domain for case in plan.cases if case.group_id==scope for domain in case.conflict_domains}
             relevant=domains&set(body['domains'])
             if not relevant: continue
             aggregate=f'group:{run_id}:{scope}';event_id=f'{identity}:{aggregate}'
@@ -239,11 +292,73 @@ class Worker:
     def pump_outbox(self):
         processed=0
         with self.repository.transaction() as tx:
+            from ..services.lifecycle_stop import LifecycleStopService
             for row in tx.scan('outbox'):
                 if processed>=self.policy.max_outbox_per_tick: break
                 if tx.get('outbox_delivery',row['key']): continue
                 body=row['body'];kind=body.get('kind')
                 try:
+                    if kind=='candidate_cancel':
+                        from .candidate_safety import CandidateSafety
+                        if 'candidate_cleanup' not in self.handlers:
+                            tx.put('outbox_errors',row['key'],{'status':'waiting_dependency','reason':'original_candidate_cleanup_provider_missing'})
+                            continue
+                        CandidateSafety.enqueue_in(tx,body['proposal_id'])
+                        tx.put('outbox_delivery',row['key'],{'status':'delivered'},immutable=True)
+                        processed+=1
+                        continue
+                    if kind=='lifecycle_stop_requested':
+                        from ..services.lifecycle_stop_jobs import StopJobs
+                        StopJobs.enqueue_in(tx,row['key'],body)
+                        tx.put('outbox_delivery',row['key'],{'status':'delivered'},immutable=True)
+                        processed+=1
+                        continue
+                    if self.reconciliation is not None:
+                        handled=self.reconciliation.consume_in(tx,row['key'],body)
+                        if handled is not None:
+                            if handled:
+                                tx.put('outbox_delivery',row['key'],{'status':'delivered'},immutable=True)
+                                processed+=1
+                            continue
+                    elif kind in {'provider_reconciliation_required','lifecycle_safety_continue'}:
+                        tx.put('outbox_errors',row['key'],{'status':'waiting_dependency',
+                            'reason':'original_operation_reconciler_not_connected','kind':kind,
+                            'operation_refs':body.get('operation_refs',()),
+                            'recovery_entry':'配置显式 LifecycleReconciliationService 并重放原 outbox'})
+                        continue
+                    if kind=='candidate_needed':
+                        evolution=getattr(self.lifecycle_supervisor,'evolution',None)
+                        if evolution is not None:
+                            from ..services.agent_lifecycle import LifecycleService
+                            life=LifecycleService.load_in(tx,body['lifecycle_id'])
+                            if evolution.supports(life):
+                                decisions=[r for r in tx.scan('lifecycle_decisions') if r['body'].get('lifecycle_id')==body['lifecycle_id']
+                                    and r['body'].get('proposal_ref')==body['proposal_ref'] and r['body'].get('route')=='needs_code']
+                                if decisions:
+                                    tx.put('candidate_needed_status',body['candidate_ref'],{'status':'decision_queued',
+                                        'decision_ref':decisions[0]['key']})
+                                    tx.put('outbox_delivery',row['key'],{'status':'delivered'},immutable=True)
+                                    processed+=1
+                                    continue
+                        tx.put('outbox_errors',row['key'],{'status':'waiting_dependency',
+                            'reason':'candidate_tools_46_not_connected','kind':kind,
+                            'candidate_ref':body['candidate_ref'],
+                            'recovery_entry':'candidate_needed_intents'})
+                        continue
+                    from .lifecycle_supervisor import LIFECYCLE_INTENTS
+                    if kind in LIFECYCLE_INTENTS or kind=='agent_supervision':
+                        handled=(self.lifecycle_supervisor.consume_in(tx,row['key'],body)
+                                 if self.lifecycle_supervisor is not None else None)
+                        if handled is not None:
+                            if handled:
+                                tx.put('outbox_delivery',row['key'],{'status':'delivered'},immutable=True)
+                                processed+=1
+                            continue
+                        if kind in LIFECYCLE_INTENTS:
+                            tx.put('outbox_errors',row['key'],{'status':'waiting_dependency',
+                                'reason':'lifecycle consumer not configured','kind':kind,
+                                'recovery_entry':'configure LifecycleSupervisor and replay retained outbox'})
+                            continue
                     if kind=='job_complete': self._publish_completion(tx,body)
                     elif kind=='resource_domains_available': self._notify_resource_waiters(tx,row['key'],body)
                     elif kind=='activate':
@@ -292,10 +407,11 @@ class Worker:
         return processed
 
     async def run_once(self):
+        self.attest_bundle()
         from .waits import WaitService
         WaitService(self.repository).watchdog()
         self.pump_outbox()
-        job=self.tasks.claim(self.owner,self.policy.claim_seconds)
+        job=self.tasks.claim(self.owner,self.policy.claim_seconds,accepted_job_kinds=self.policy.accepted_job_kinds)
         if job is None: return False
         handler=self.handlers.get(self._job_kind(job['job_kind']))
         if handler is None:
@@ -304,10 +420,17 @@ class Worker:
             return True
         async def heartbeat():
             while True:
-                await asyncio.sleep(self.policy.claim_seconds/3)
+                await asyncio.sleep(min(self.policy.claim_seconds/3,15) if self.bundle_service else self.policy.claim_seconds/3)
+                self.attest_bundle()
                 self.tasks.renew_claim(job['job_id'],owner_epoch=job['owner_epoch'],ttl=self.policy.claim_seconds)
         pulse=asyncio.create_task(heartbeat())
-        execution=asyncio.create_task(handler(job))
+        async def execute_bound_job():
+            from ..services.measurement_generation import MeasurementGenerationService
+            with self.repository.transaction() as tx:
+                TaskBackend.assert_claim_in(tx,job)
+                MeasurementGenerationService.validate_job_in(tx,job)
+            return await handler(job)
+        execution=asyncio.create_task(execute_bound_job())
         try:
             with self.repository.transaction() as tx: remaining=max(0,job['deadline']-tx.now)
             done,_=await asyncio.wait({pulse,execution},timeout=min(remaining,self.policy.job_seconds),return_when=asyncio.FIRST_COMPLETED)
@@ -364,50 +487,111 @@ class RemedyJobHandler:
 
     旧 receipt/证据不可变；重执行只会产生新 receipt。预算由 NodeRemediationService 把守。
     """
-    def __init__(self,repository,node_service_factory,*,lease_seconds,segment_seconds,owner='remedy'):
+    def __init__(self,repository,node_service_factory,*,lease_seconds,segment_seconds,owner='remedy',repair_catalog=None):
         self.repository=repository;self.node_service_factory=node_service_factory
         self.lease_seconds=lease_seconds;self.segment_seconds=segment_seconds;self.owner=owner
+        self.repair_catalog=repair_catalog
     async def __call__(self,job):
-        from ..persistence.repository import LeaseToken
+        if 'repair_order_ref' in job['payload']:
+            from .lifecycle_worker import LifecycleRepairWorker
+            return await LifecycleRepairWorker(self.repository, self.node_service_factory,
+                lease_seconds=self.lease_seconds, segment_seconds=self.segment_seconds,
+                owner=self.owner,repair_catalog=self.repair_catalog)(job)
         from ..graphs.executor import NodeExecutor
-        from .driver import Activation
-        ref=job['payload']['remedy_ref']
+        from ..services.lifecycle_safety import LifecycleSafetyService
+        ref = job['payload']['remedy_ref']
         with self.repository.transaction() as tx:
-            row=tx.get('remedy_orders',ref)
-            if not row: return {'execution_status':'blocked','error':{'code':'INPUT_MISSING','reason':'remedy order missing'}}
-            order=row['body']
-        token=LeaseToken(job['thread_id'],job['owner_epoch'],self.owner,job['deadline'])
-        activation=Activation(activation_id=job['activation_id'],run_id=order['run_ref'],thread_id=job['thread_id'],
-            scope=order['work_ref'],plan_ref=order['plan_ref'],graph_ref=order['graph_ref'],
-            input_refs=order.get('input_refs',{}),lease_seconds=self.lease_seconds,segment_seconds=self.segment_seconds)
-        handlers=self.node_service_factory(token,activation)
-        executor=NodeExecutor(self.repository,handlers,token)
-        state={'thread_id':job['thread_id'],'scope':order['work_ref'],'run_ref':order['run_ref'],
-               'plan_ref':order['plan_ref'],'graph_ref':order['graph_ref'],'activation_id':job['activation_id'],
-               'input_refs':order.get('input_refs',{}),'result_refs':{},
-               'node_visits':{order['node_id']:order['attempt']}}   # 新 visit => 新 receipt
+            TaskBackend.assert_claim_in(tx, job)
+            row = tx.get('remedy_orders', ref)
+            if not row:
+                return {'execution_status': 'blocked', 'error': {'code': 'INPUT_MISSING', 'reason': 'remedy order missing'}}
+            order = row['body']
+            if order['work_ref'] != job['scope_ref'] or order['run_ref'] != job['run_id']:
+                raise Conflict('remedy scope differs from claimed job')
+            if order['node_id'] not in {'N01','N07','N09'}:
+                raise Conflict('legacy remedy may only drain registered reconcile/seal/cleanup work')
+            previous = tx.get('agent_remedies', f'{ref}:outcome')
+            if previous and 'return_result' in previous['body']:
+                return previous['body']['return_result']
+            token = tx.acquire_thread(job['thread_id'], self.owner,
+                                      min(self.lease_seconds, job['deadline'] - tx.now))
+            work = tx.get('work_instances', order['work_ref'])
+            owns_work = work is not None
+            if owns_work:
+                if any(work['body'].get(k) != order[v] for k,v in (
+                        ('run_id','run_ref'),('plan_ref','plan_ref'),('graph_ref','graph_ref'))):
+                    raise Conflict('legacy remedy differs from frozen work identity')
+                LifecycleSafetyService.acquire_work_in(tx, order['work_ref'], token,
+                    purpose='cleanup' if order['node_id'] == 'N09' else 'reconcile')
+        pulse = execution = None
         try:
-            result,receipt=await executor.execute(order['node_id'],state)
-            status=result.execution_status
-        except StaleOwner:
-            raise
-        except Exception:
-            status='failed';receipt=None
-        with self.repository.transaction() as tx:
-            tx.put('agent_remedies',f'{ref}:outcome',{'status':status,'attempt':order['attempt'],
-                   'action_ref':order['action_ref'],'receipt_ref':receipt},immutable=True)
-            # 修复成功后图级再入：从该节点的下一个节点继续跑完工作图（旧 receipt 不变）。
-            nxt=_next_work_node(order['node_id'])
-            if status=='succeeded' and nxt is not None:
-                run=tx.get('runs',order['run_ref'])
-                TaskBackend.enqueue_in(tx,JobSpec(job_id=str(uuid4()),job_kind='work',scope_ref=order['work_ref'],
-                    thread_id=f'work:{canonical_hash(order["work_ref"])}',activation_id=str(uuid4()),
-                    dedupe_key=f'continue:{ref}:{nxt}',due_at=tx.now,deadline=job['deadline'],
-                    run_id=order['run_ref'],dispatch_generation=run['body']['dispatch_generation'] if run else 1,
-                    payload={'work_ref':order['work_ref'],'plan_ref':order['plan_ref'],
-                             'graph_ref':order['graph_ref'],'resume_from':nxt,'remedy_ref':ref}))
-        return {'execution_status':status,'output':{'remedy_ref':ref,'receipt_ref':receipt,
-                'attempt':order['attempt'],'resume_from':_next_work_node(order['node_id']) if status=='succeeded' else None}}
+            activation = Activation(activation_id=job['activation_id'], run_id=order['run_ref'],
+                thread_id=job['thread_id'], scope=order['work_ref'], plan_ref=order['plan_ref'],
+                graph_ref=order['graph_ref'], input_refs=order.get('input_refs', {}),
+                lease_seconds=self.lease_seconds, segment_seconds=self.segment_seconds)
+            handlers = self.node_service_factory(token, activation)
+            def fence(tx):
+                TaskBackend.assert_claim_in(tx, job)
+                tx.assert_fence(token)
+                if owns_work:
+                    LifecycleSafetyService.assert_work_in(tx, order['work_ref'], token)
+            executor = NodeExecutor(self.repository, handlers, token, additional_fence=fence)
+            state = {'thread_id': job['thread_id'], 'scope': order['work_ref'],
+                     'run_ref': order['run_ref'], 'plan_ref': order['plan_ref'],
+                     'graph_ref': order['graph_ref'], 'activation_id': job['activation_id'],
+                     'input_refs': order.get('input_refs', {}), 'result_refs': {},
+                     'node_visits': {order['node_id']: order['attempt']}}
+
+            async def heartbeat():
+                while True:
+                    await asyncio.sleep(self.lease_seconds / 3)
+                    with self.repository.transaction() as tx:
+                        fence(tx)
+                        tx.renew_thread(token, min(self.lease_seconds, job['deadline'] - tx.now))
+
+            pulse = asyncio.create_task(heartbeat())
+            execution = asyncio.create_task(executor.execute(order['node_id'], state))
+            with self.repository.transaction() as tx:
+                remaining = max(0, job['deadline'] - tx.now)
+            done, _ = await asyncio.wait({pulse, execution}, timeout=min(self.segment_seconds, remaining),
+                                         return_when=asyncio.FIRST_COMPLETED)
+            if pulse in done:
+                pulse.result()
+            if execution not in done:
+                raise TimeoutError('remedy segment expired; reconcile before retry')
+            result, receipt = execution.result()
+            with self.repository.transaction() as tx:
+                fence(tx)
+                review = tx.get('node_reviews', receipt)
+            postcheck_accepted = (result.review_status != 'rejected' and review is not None
+                                  and review['body']['decision'] == 'accept')
+            status = result.execution_status
+            if status == 'succeeded' and not postcheck_accepted:
+                status = 'blocked'
+            returned = {'execution_status': status, 'output': {'remedy_ref': ref,
+                        'receipt_ref': receipt, 'attempt': order['attempt'],
+                        'recovery_status': 'blocked', 'reason': 'lifecycle_contract_required'}}
+            with self.repository.transaction() as tx:
+                fence(tx)
+                tx.put('agent_remedies', f'{ref}:outcome', {'status': status,
+                       'attempt': order['attempt'], 'action_ref': order['action_ref'],
+                       'receipt_ref': receipt, 'return_result': returned,
+                       'node_execution_status': result.execution_status,
+                       'postcheck_status': 'accepted' if postcheck_accepted else 'rejected'}, immutable=True)
+            return returned
+        finally:
+            for task in (execution, pulse):
+                if task is not None:
+                    if not task.done():
+                        task.cancel()
+                    with suppress(asyncio.CancelledError, Exception):
+                        await task
+            with self.repository.transaction() as tx:
+                if owns_work:
+                    with suppress(StaleOwner):
+                        LifecycleSafetyService.release_work_in(tx, order['work_ref'], token)
+                with suppress(StaleOwner):
+                    tx.release_thread(token)
 
 
 class RecoveryJobHandler:
@@ -419,25 +603,44 @@ class RecoveryJobHandler:
         self.owner=owner
     async def __call__(self,job):
         from .leases import LeaseService
-        token=LeaseService(self.repository).acquire_thread(job['thread_id'],self.owner,self.lease_seconds)
+        from ..services.lifecycle_safety import LifecycleSafetyService
         scope=job['scope_ref']
+        with self.repository.transaction() as tx:
+            token=tx.acquire_thread(job['thread_id'],self.owner,self.lease_seconds)
+            work=tx.get('work_instances',scope)
+            if work:
+                if work['body']['run_id']!=job['run_id']:
+                    raise Conflict('recovery work belongs to another run')
+                LifecycleSafetyService.acquire_work_in(tx,scope,token,
+                    purpose='cleanup' if business_job_kind(job['job_kind'])=='cleanup' else 'reconcile')
+        def fence(tx):
+            tx.assert_fence(token)
+            if work:
+                LifecycleSafetyService.assert_work_in(tx,scope,token)
         try:
-            if scope==job['run_id'] and job['job_kind']=='cleanup':
+            if scope==job['run_id'] and business_job_kind(job['job_kind'])=='cleanup' and not job['payload'].get('scope_cleanup'):
                 with self.repository.transaction() as tx:
                     tx.assert_fence(token)
                     run=tx.get('runs',job['run_id'])['body']
                     scopes=sorted({r['body']['scope'] for r in tx.scan('operations') if r['body']['run_id']==job['run_id']})
+                    stopped=[r for r in tx.scan('lifecycle_stop_requests')
+                        if r['body']['run_ref']==job['run_id']]
+                    managed={r['body']['scope_ref'] for r in stopped}
                     children=[]
                     for owned_scope in scopes:
+                        # Modern lifecycle safety retains exact original IDs,
+                        # grants and budgets. Legacy cleanup cannot bypass it.
+                        if owned_scope in managed: continue
                         dedupe=f'run-cleanup:{job["activation_id"]}:{owned_scope}'
                         existing=tx.get('job_dedupe',dedupe)
                         if existing:
                             children.append(existing['body']['job_id'])
                             continue
                         identity=str(uuid4())
-                        TaskBackend.enqueue_in(tx,JobSpec(job_id=identity,job_kind='cleanup',scope_ref=owned_scope,thread_id=f'cleanup:{job["run_id"]}:{owned_scope}',activation_id=str(uuid4()),dedupe_key=dedupe,due_at=tx.now,deadline=job['deadline'],run_id=job['run_id'],dispatch_generation=run['dispatch_generation'],payload={'plan_ref':run['active_plan_ref'],'graph_ref':run['graph_ref'],'policy':'cleanup'}))
+                        TaskBackend.enqueue_in(tx,JobSpec(job_id=identity,job_kind='cleanup',scope_ref=owned_scope,thread_id=f'cleanup:{job["run_id"]}:{owned_scope}',activation_id=str(uuid4()),dedupe_key=dedupe,due_at=tx.now,deadline=job['deadline'],run_id=job['run_id'],dispatch_generation=run['dispatch_generation'],payload={'plan_ref':run['active_plan_ref'],'graph_ref':run['graph_ref'],'policy':'cleanup','scope_cleanup':True}))
                         children.append(identity)
-                return {'execution_status':'succeeded','cleanup_status':'pending' if children else 'not_needed','cleanup_jobs':children}
+                return {'execution_status':'succeeded','cleanup_status':'pending' if children or stopped else 'not_needed','cleanup_jobs':children,
+                    'lifecycle_stop_refs':[r['key'] for r in stopped]}
             with self.repository.transaction() as tx:
                 records=[r for r in tx.scan('operations') if r['body']['scope']==scope and r['body']['run_id']==job['run_id']]
                 requested=job['payload'].get('operation_id')
@@ -448,29 +651,32 @@ class RecoveryJobHandler:
             statuses={}
             for record in records:
                 identity=record['key']
+                with self.repository.transaction() as tx: fence(tx)
                 status=await self.operations.reconcile(identity,scope,token)
-                if job['job_kind']=='cleanup' and status.state=='running':
+                if business_job_kind(job['job_kind'])=='cleanup' and status.state=='running':
+                    with self.repository.transaction() as tx: fence(tx)
                     status=await self.operations.cancel(identity,scope,'authorized recovery cleanup',token)
                 statuses[identity]=status.state
                 if status.state=='unknown' or not status.authoritative or status.state=='running':
                     unknown.append(identity)
             if unknown:
                 with self.repository.transaction() as tx:
-                    tx.assert_fence(token)
+                    fence(tx)
                     for lease in tx.scan('resource_leases'):
                         if lease['body']['scope']==scope:
                             tx.put('resource_leases',lease['key'],lease['body']|{'status':'quarantine','reason':'recovery cannot prove effects closed'})
                 return {'execution_status':'blocked','operation_status':statuses,'cleanup_status':'unknown','unknown_operations':unknown}
-            if job['job_kind']!='cleanup':
+            if business_job_kind(job['job_kind'])!='cleanup':
                 return {'execution_status':'succeeded','operation_status':statuses,'cleanup_status':'pending'}
             with self.repository.transaction() as tx:
+                fence(tx)
                 resources=tuple(r['key'] for r in tx.scan('resources') if r['body']['scope']==scope and r['body']['status']!='closed')
             if resources:
                 cleanup=await self.operations.cleanup(scope,resources,token)
                 if cleanup.status!='complete':
                     return {'execution_status':'blocked','operation_status':statuses,'cleanup_status':cleanup.status,'remaining':list(cleanup.remaining)}
             with self.repository.transaction() as tx:
-                tx.assert_fence(token)
+                fence(tx)
                 for lease in tx.scan('resource_leases'):
                     if lease['body']['scope']==scope:
                         tx.delete('resource_leases',lease['key'])
@@ -478,4 +684,7 @@ class RecoveryJobHandler:
             return {'execution_status':'succeeded','operation_status':statuses,'cleanup_status':'complete'}
         finally:
             with suppress(StaleOwner):
-                with self.repository.transaction() as tx: tx.release_thread(token)
+                with self.repository.transaction() as tx:
+                    if work:
+                        LifecycleSafetyService.release_work_in(tx,scope,token)
+                    tx.release_thread(token)

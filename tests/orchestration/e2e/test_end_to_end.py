@@ -51,7 +51,6 @@ def test_partial_failure_still_reaches_cleanup_and_delivery():
 @pytest.mark.skipif(not os.environ.get('SANDBOX_GRAPH_TEST_PRODUCT_ENV'),
                     reason='BLOCKED: real dual-environment-group products required')
 def test_real_dual_group_end_to_end():  # pragma: no cover - real environment only
-    """Fill with real products: dual groups, partial failure, human wait, incremental analysis,
-    only-analysis/report. Acceptance: ORC-065-068; every selected item has a disposition and
-    the Excel/report artifacts share one analysis version."""
-    raise NotImplementedError('run the real dual-group acceptance described in docs/acceptance-manual.md')
+    from sandbox_graph.testing.live_acceptance import run_live_acceptance
+    result=asyncio.run(run_live_acceptance(os.environ['SANDBOX_GRAPH_TEST_PRODUCT_ENV']))
+    assert result['status']=='passed' and len(result['groups'])>=2

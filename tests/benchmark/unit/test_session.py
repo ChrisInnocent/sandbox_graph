@@ -335,3 +335,15 @@ async def test_cancelled_parent_keeps_durable_success_child_and_rejects_conflict
     report['results']['0']['value']={'children':[dict(child,status='failed')]}
     atomic_json(tmp_path/'load.json',report)
     with pytest.raises(ValueError,match='child'):session.records()
+
+
+def test_session_reentry_restores_private_instance_credentials_without_public_tokens(tmp_path):
+    from sandbox_bench.session import BenchSession
+    case=CaseContract.model_validate(sample())
+    config={'api_url':'http://localhost:1','data_url':'http://localhost:1','product':'agentenv'}
+    first=BenchSession(case,config,tmp_path,scenario=Scenario())
+    assert first.adapter._instance_vault is not None
+    first.adapter._instance_vault.save('owned',{'envdAccessToken':'private-value'})
+    second=BenchSession(case,config,tmp_path,scenario=Scenario())
+    assert second.adapter._instance_vault.load('owned')['envdAccessToken']=='private-value'
+    assert 'private-value' not in (tmp_path/'session.json').read_text()

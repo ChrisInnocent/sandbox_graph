@@ -1,10 +1,26 @@
 # Proposal
 
+## 当前工作区
+
+2026-10-24：生命周期代码、规格、设计、任务和验证资产已合入本项目根目录。以根目录工作区为审阅对象；原工作树仅保留历史资产，不能再以“主目录未合入”解释当前状态。未自动提交或推送。当前边界见 [能力账本](../../../docs/orchestration/lifecycle-status.md) 与 [继续实施记录](../../../docs/verification/agent-lifecycle-runtime/continuation-20261024.md)。
+
 ## Why
 
 沙箱选型需要一套端到端、可重入、可按需求增量修改的测试工作流，使性能结论能够追溯到环境、测量口径和原始证据。将确定性操作脚本化，并隔离各节点 agent 的上下文，可以减少重复执行、token 浪费、无证据判断及上下文压缩后的信息丢失。
 
+## 当前实施范围（2026-10-23）
+
+当前已在根目录实现：节点生命周期/双层预算/原操作对账、已登记动作与恢复计划、应用内 provider 和持久角色任务、实际候选 CAS 编辑与冻结、独立 reviewer、候选外可信观察器、bundle/worker 版本绑定、晋级事务、发布后观察、回退和 rollout。普通 env/eval worker 按显式配置装配这些服务；没有配置或能力时保留具体 blocked 原因。
+
+本地测试不替代专用 PostgreSQL、真实 Bubblewrap、外部 provider 或三产品部署验收。完整数据库硬杀矩阵、远端 bootstrap/制品投递、部分运行时参数和动态产品归属发现仍有代码工作。task checkbox 仅表示该行完整验收完成；已实现但包含未执行 live 验收的行仍不勾选。详情与实际日志见 [继续实施记录](../../../docs/verification/agent-lifecycle-runtime/continuation-20261024.md)。
+
+目标合同由下文及 specs/design 定义；当前差额不降低目标要求，OpenSpec planning complete 只表示规划产物齐备。
+
 ## What Changes
+
+2026-10-24 后续修复：端到端检查发现的 R1（drain 被取消）、R2（停止后角色入队）、R3（父级漏计子 provider）已按 TDD 修正，25项专项通过；规格、ALD-11、ATG-08 和45.4-B/C同步。完整45.4仍未勾选，任务总数160/209不变。详细行为及回归范围见 [修复证据](../../../docs/verification/agent-lifecycle-runtime/stop-fixes-20261024.md)。
+
+- 2026-10-22 补全 WF-39：工作节点有界自修复、受限 agent team、隔离候选代码/图迭代、可信测试门禁与新版本运行。详见 [生命周期详细设计](agent-lifecycle-design.md)、[测试门禁设计](agent-lifecycle-test-gates.md)、[tasks 42–49](tasks.md)；交接审阅缺口与真实租约门禁已纳入 ALD-10/ATG-07；用户已授权进入 apply，逐项实现状态以 tasks 与实施记录为准。
 
 - 定义五个大颗粒阶段：环境检查、环境配置、指标测试、数据分析、生成结论归档；阶段内部允许继续细化节点。
 - 定义主 agent、环境组统筹 sub-agent、组内工作节点 sub-agent 的三层看护、上下文边界与分层状态；确定性操作由脚本执行，明确模型判断和人工确认的适用条件。
@@ -21,7 +37,7 @@
 - 基于三套源码审计展开全部基础场景及低优先级扩展的用例节点，区分创建状态完成、服务端日志耗时及命令验证，明确各场景计时、断言、证据与重入合同。
 - 逐工作节点明确确定性脚本、模型判断、必要人工及实现状态，绘制节点内部 Mermaid；密度过程同步输出每秒成功创建数与整轮创建吞吐。
 - 细化来源产物语义与构建场景：创建方法身份由来源产物 kind 与解析出的启动路径决定，不按接口参数名称；模板来源钉死产物 kind，快照来源区分磁盘／内存；新增 B00 来源产物构建场景目录（构建模板产物／构建快照产物），构建成本只计一次且不与 B02.FULL、B08 重复。
-- 本次固化需求、澄清记录、编排代码与工程测试设计及实施 tasks，不编写实现、部署环境或执行性能测试。
+- 本 change 包含需求、设计、测试门禁、实施 tasks 与逐项实现；用户已授权进入 apply。真实部署与性能实验依据具体环境合同执行，当前生命周期增量的实现/验收边界见上表。
 
 ## Capabilities
 
@@ -40,11 +56,13 @@
 - 规划归属为 `sandbox_graph` 根目录，覆盖跨候选沙箱的选型工作流；本次不修改 `AgentENV`、`CubeSandbox`、`kuasar-components` 或 `kuasar-sandbox` 的产品代码。
 - 后续可评估复用各项目的部署、环境检查、性能 harness、结果校验和报告能力，不默认已有工具已经满足统一合同。
 - 框架、持久化后端、执行器和产物存储的工程基线见 orchestration-design D01；产品适配及真实测试参数仍需按合同逐项确认。
-- 当前交付为本 proposal、三份 delta spec、`design.md` 主图、`test-nodes.md` 场景节点、`node-automation.md` 职责和状态表、`node-workflows.md` 节点内部 Mermaid；另含 `orchestration-design.md` 代码设计、`orchestration-test-design.md` 工程测试设计与 `tasks.md` 实施清单；均为规划产物。Spec 与设计规定目标行为，不代表能力已经实现。
+- 当前交付为本 proposal、三份 delta spec、`design.md` 主图、`test-nodes.md` 场景节点、`node-automation.md` 职责和状态表、`node-workflows.md` 节点内部 Mermaid；另含 `orchestration-design.md` 代码设计、`orchestration-test-design.md` 工程测试设计与 `tasks.md` 实施清单；这些文件承载目标合同；已有代码和已验证范围另由 tasks、实施记录及原始证据列明。
 
 ## Clarification Record
 
 ### 已确认的需求
+
+下列为按讨论顺序保存的确认记录；早期“先设计/暂停”描述对应当时阶段，后续第37项及生命周期 apply 授权已进入实施。当前进度以上方实施范围和 tasks 为准。
 
 1. 五个大颗粒阶段如上，支持单节点及多节点、不同节点角色和不同沙箱类型。
 2. 确定性操作脚本化；主 agent 看护全流程；节点 sub-agent 仅掌握自身所需上下文。
@@ -94,13 +112,13 @@
 
 41. 测试间环境还原审计（[alignment.md §10](../../../docs/source-audit/alignment.md)）确认：三产品预热都不以可删除沙箱记录出现（Kuasar 预热 runner 单元无 sandbox 行、Cube TAP/cgroup 资源池＋idle `AutoPause`、AgentENV `warm-pool` 为设备级）；删除语义 Kuasar 异步（`deleting`→`dead`）/ Cube 同步 / AgentENV 阻塞；归属判据为创建时写入的 `metadata.run_id`。据此登记：需求 RT-43，执行设计 [benchmark-design.md](benchmark-design.md) BCD-14，测试合同 [benchmark-contract-design.md](benchmark-contract-design.md) BCT-11，任务 `tasks.md` 组 34。实现 `sandbox_bench/restore.py`（小批量多轮删除＋残留核验＋基线／预热排除）与 `restore` 子命令，未跑真实环境前只登记为 locally_verified。
 
-42. 固化可选指标目录与可调背景条件目录，并产出逐场景详细规格。指标目录（36 项）见 RT-44／[benchmark-design.md](benchmark-design.md) BCD-15；条件目录（27 项）见 RT-45／BCD-16；逐场景合并规格见 [scenario-spec.md](scenario-spec.md)（B00–B10、E01–E06，含 需测/可测 指标、需声明/可选 条件、完成判据、正确性断言与失败重入）。当前缺口：B00 构建期资源／产物大小／冷热缓存未实现（BCD-15 A-01/A-02/B-03/B-04/B-05）、B00 背景密度条件未建模（BCD-16 §16.3 N-03）。任务组 36/37。
+42. 固化可选指标目录与可调背景条件目录，并产出逐场景详细规格。指标目录（36 项）见 RT-44／[benchmark-design.md](benchmark-design.md) BCD-15；条件目录（27 项）见 RT-45／BCD-16；逐场景合并规格见 [scenario-spec.md](scenario-spec.md)（B00–B10、E01–E06，含 需测/可测 指标、需声明/可选 条件、完成判据、正确性断言与失败重入）。上述讨论时识别的 B00 构建资源和背景密度缺口对应任务组 36/37；36.2/36.3/37.2/37.3 已登记实现，真实环境项 36.4/37.4 仍未验收。
 
 ### 设计基线与仍需细化的事项
 
 自动化职责的完整逐节点清单见 [node-automation.md](node-automation.md)，内部图见 [node-workflows.md](node-workflows.md)。脚本负责确定性执行、状态转换、计数、计算、证据和规则校验；模型负责新语义／未知异常和报告解释；人工只解决未确定意图／目标／范围。五阶段全部有脚本化部分，分析和报告也不交给模型手工算数。现有草稿不计为已完成节点。
 
-代码层的工程提案见 [orchestration-design.md](orchestration-design.md)，对应验证合同见 [orchestration-test-design.md](orchestration-test-design.md)。两者是现有 design 的附件；未切换 schema，现已创建实施 tasks，未开始编码。Python/LangGraph、PostgreSQL、持久任务与事件 outbox 是本轮任务采用的工程设计基线，并非用户逐项指定的技术栈；更改基线须同步设计及验收。
+代码层的工程提案见 [orchestration-design.md](orchestration-design.md)，对应验证合同见 [orchestration-test-design.md](orchestration-test-design.md)。两者是现有 design 的附件；沿用 spec-driven schema，已有编排与脚本实现，生命周期增量已开始 apply，按任务逐项记录验证范围。Python/LangGraph、PostgreSQL、持久任务与事件 outbox 是本轮任务采用的工程设计基线，并非用户逐项指定的技术栈；更改基线须同步设计及验收。
 
 - 优先评估 LangGraph 的主图、子图和持久化能力；LangChain 可用于模型和工具接入。
 - 主图与子图显式传递必要信息，大型原始数据独立保存，状态只携带引用和摘要。
@@ -146,6 +164,8 @@
 
 ## Continuation
 
+**当前继续入口（2026-10-23）**：用户已授权 apply；按本文件顶部实施范围、tasks 的未完成项和 [当前能力对照](../../../docs/orchestration/lifecycle-status.md) 继续实现。以下保留初始需求澄清时的交接记录，其中“先审阅再实现”“所有节点仍是设计”等仅描述当时阶段，不是当前暂停代码实施的指令。未决真实实验参数仍保留。
+
 恢复讨论时先读取本文件中的已确认需求与未决问题，再读取三份 spec。三层 agent 责任、局部与全局分析、Excel、横向对比和结论归档分工已记录在 `evaluation-workflow` 的 WF-20 至 WF-27。Q9 已解决：每套单节点环境或多节点集群为一组，一名统筹 agent 管理整组，节点角色独立声明与核验。汇聚方式已确认为阶段增量输出、最终统一横向对比后形成选型报告；默认报告为分场景横向对比与适用场景推荐，综合评分和总排名仅作可选项。接下来细化数据分析的节点输入输出、验收与回退关系，再确定 Excel 和报告模板。十类基础场景的功能与计时语义、条件档位及验收标准仍需逐项展开；六类补充场景继续保持低优先级。Q3 已解决；Q1/Q2/Q4 至 Q8 不因切换主题而视为已解决，真实测试参数仍须冻结。
 
 当前先审阅 `design.md` 的主图、环境组子图、指标测试子图及节点合同，再细化调度实现任务；不要续写提前产生的 `sandbox_bench/` 脚本草稿。图与状态合同确认后再实现 LangGraph 并接入确定性脚本。本次不归档，不把尚未实现的需求作为已交付能力发布。
@@ -156,6 +176,6 @@
 
 节点职责／内图现已统一索引：恢复某节点时只读取 `node-automation.md` 对应行、`node-workflows.md` 对应子图、相关方法合同及证据引用。S/M/H 分工与实现状态独立保存；目录覆盖全部 R/G/T/E/C/N/A/F 和 B/E 方法。密度吞吐的每秒事件桶、等待／缺测区别及实际完成计数在 test-nodes 第 7 节。Q12 未解决，不能据补完脚本化设计擅自确定 Guest OS 扣除方法。
 
-最新继续入口：先读 `orchestration-design.md` 的 D01、D04–D07、D14，再按目标模块读取相关章节及测试设计 T10 的追溯行。Q3 已由用户确认并落实至 D14、WF-36 与 ORC-056。`tasks.md` 记录图编排、测试执行代码与工程契约工作以及其余环境／报告覆盖缺口；先实现通用编排合同，再接产品适配。本轮只交付规划，不恢复暂停的脚本草稿。
+最新继续入口：先读 `orchestration-design.md` 的 D01、D04–D07、D14，再按目标模块读取相关章节及测试设计 T10 的追溯行。Q3 已由用户确认并落实至 D14、WF-36 与 ORC-056。`tasks.md` 记录图编排、测试执行代码与工程契约工作以及其余环境／报告覆盖缺口；先实现通用编排合同，再接产品适配。该表是初始规划阶段的交接约束；后续已授权 apply，当前实现范围见本文件状态表及 tasks。
 
 本轮扩展索引：[测试执行代码设计](benchmark-design.md)、[测试代码的契约设计](benchmark-contract-design.md)。编排ORC与测试器BTC分别验收；不再仅把业务测量算法列为远期接口。

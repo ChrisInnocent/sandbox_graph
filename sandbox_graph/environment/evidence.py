@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from ..artifacts.store import FileArtifactStore
     from ..domain.models import EvidenceRef
 
-_SENSITIVE_KEY = re.compile(r"(?:authorization|x-api-key|api[_-]?key(?!_env)|api[_-]?secret|manifest[_-]?key|access[_-]?token|traffic[_-]?token|password|private[_-]?key|secret[_-]?value)", re.IGNORECASE)
+_SENSITIVE_KEY = re.compile(r"(?:authorization|x-api-key|api[_-]?key(?!_env)|api[_-]?secret|manifest[_-]?key|route[_-]?key|access[_-]?token|traffic[_-]?token|password|private[_-]?key|secret[_-]?value)", re.IGNORECASE)
 _PRIVATE_MATERIAL = re.compile(r"-----BEGIN (?:OPENSSH |RSA |EC )?PRIVATE KEY-----|^\s*(?:authorization|x-api-key|e2b-traffic-access-token)\s*:", re.IGNORECASE | re.MULTILINE)
 
 

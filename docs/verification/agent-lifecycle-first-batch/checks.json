@@ -1,0 +1,8 @@
+{
+  "local_links_checked": 310,
+  "broken_links": [],
+  "tasks": 209,
+  "unique_task_ids": 209,
+  "checked": 150,
+  "method": "Scan Markdown local links and task identifiers; legacy verify_planning.py hardcodes historical 96 tasks and is not used as a current gate."
+}

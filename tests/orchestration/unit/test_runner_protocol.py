@@ -55,3 +55,16 @@ def test_budget_payload_identity_cannot_change_on_replay(repository):
     asyncio.run(s.submit(op,token))
     changed=op.model_copy(update={'input':{'Q':6},'input_hash':canonical_hash({'Q':6})})
     with pytest.raises(Conflict): asyncio.run(s.submit(changed,token))
+
+
+@pytest.mark.parametrize('policy',['cancel','drain'])
+def test_unstarted_permit_cannot_submit_after_version_cutoff(repository,policy):
+    s,runner,op,token=service(repository)
+    RevisionService(repository).permit('r','op',generation=1,scope='G_A')
+    RevisionService(repository).activate_revision(request_id='cutoff',predecessor_run_id='r',
+        expected_revision=0,candidate_plan_hash='p2',graph_ref='g2',disposition_policy=policy)
+    with pytest.raises(Conflict,match='gate|superseded'):
+        asyncio.run(s.submit(op,token))
+    assert runner.effects=={}
+    with repository.transaction() as tx:
+        assert tx.get('operations','op')['body']['phase']=='intent'

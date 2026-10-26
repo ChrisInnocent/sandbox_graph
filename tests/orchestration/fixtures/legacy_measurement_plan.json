@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "schema_version": 1,
+      "case_id": "case/a",
+      "group_id": "group/a",
+      "sandbox_type": "sandbox",
+      "scenario_id": "scenario/a",
+      "method_id": "method/a",
+      "method_version": "1",
+      "repeat_id": 1,
+      "priority": "P0",
+      "conditions": [
+        {
+          "Q": 4
+        }
+      ],
+      "dependencies": [],
+      "capability": "supported",
+      "adapter_verified": true,
+      "conflict_domains": [
+        "host/a"
+      ],
+      "contract_ref": "contract/a",
+      "environment_ref": "",
+      "artifact_kind": null,
+      "launch_path": null,
+      "producer_step": null,
+      "cost_scope": null,
+      "topology": null,
+      "endpoint_kind": null,
+      "readiness_signal": null,
+      "endpoint_ref": null
+    }
+  ],
+  "dependencies": [],
+  "gaps": [],
+  "selection": {
+    "schema_version": 1,
+    "groups": null,
+    "sandbox_types": null,
+    "scenarios": null,
+    "methods": null,
+    "priorities": null,
+    "topologies": null,
+    "artifact_kinds": null,
+    "exclude": [],
+    "stage": "all"
+  },
+  "status": "ready",
+  "stage": "all",
+  "catalog_hash": "e5f5c7316cfd2b64a2d718d2a0da20b803dcc526f820e5ce55724af9915b1557",
+  "auth_hash": "973fda6e00a17a00aa91d0a3470485a8f9cbf126d3879706e71949c02f7de9cf",
+  "evidence_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+  "graph_ref": "graph/a",
+  "contract_ref": "contract/a"
+}

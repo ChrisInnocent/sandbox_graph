@@ -91,6 +91,14 @@ class OperationJournal:
             except FileNotFoundError:
                 pass
 
+    def get(self, operation_id: str) -> dict[str, Any] | None:
+        """Observe the original immutable input and durable transition; no replay."""
+        fd=self._locked()
+        try:return self._load().get(operation_id)
+        finally:
+            fcntl.flock(fd,fcntl.LOCK_UN)
+            os.close(fd)
+
     def accept(self, *, operation_id: str, action: str, input_data: dict[str, Any]) -> dict[str, Any]:
         if not operation_id or len(operation_id) > 128 or not action.endswith(".v1"):
             raise ValueError("operation or action identity is invalid")
@@ -143,3 +151,38 @@ class OperationJournal:
         finally:
             fcntl.flock(fd, fcntl.LOCK_UN)
             os.close(fd)
+
+    def bind_execution(self,operation_id,execution):
+        """Attach the actual child identity once, before observing command output."""
+        fd=self._locked()
+        try:
+            records=self._load();row=records.get(operation_id)
+            if not row or row['state']!='started':raise JournalConflict('execution requires a started original operation')
+            if row.get('execution') not in (None,execution):raise JournalConflict('execution identity already bound')
+            if not isinstance(execution.get('pid'),int) or not isinstance(execution.get('start_ticks'),int):
+                raise ValueError('exact process identity required')
+            records[operation_id]=row|{'execution':execution};self._save(records)
+        finally:os.close(fd)
+
+    def mark_cancel(self,operation_id,input_hash):
+        fd=self._locked()
+        try:
+            records=self._load();row=records.get(operation_id)
+            if not row or row['input_hash']!=input_hash:raise JournalConflict('cancel input identity differs')
+            if row['state'] not in {'completed','failed','cancelled'}:
+                records[operation_id]=row|{'cancel_requested':True};self._save(records)
+        finally:os.close(fd)
+
+    def finish_cancel(self,operation_id,input_hash):
+        """Trusted caller holds host lock and has observed original children gone."""
+        fd=self._locked()
+        try:
+            records=self._load();row=records.get(operation_id)
+            if not row or row['input_hash']!=input_hash or not row.get('cancel_requested'):
+                raise JournalConflict('original cancel intent required')
+            if row['state'] in {'completed','failed','cancelled'}:return row
+            value=row|{'state':'cancelled','updated_at':time.time(),'result':{'status':'cancelled',
+                'processes_stopped':True,'effects':'partial_requires_fresh_environment_check',
+                'private_logs':row.get('execution',{}).get('logs',[])}}
+            records[operation_id]=value;self._save(records);return value
+        finally:os.close(fd)

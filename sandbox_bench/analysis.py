@@ -287,7 +287,28 @@ def analyze_case(records):
                 result['resources']['attribution_reason']='unattributed_or_reused_processes_excluded'
     else:result['resources']['guest_net_pss']={'status':'unavailable','reason':'missing_guest_definition',
                                                'raw_pss_bytes':None,'net_pss_bytes':None}
+    hold=records.get('creation_hold')
+    if hold is not None:
+        if hold.get('status')=='completed' and hold.get('resource_status')=='observed':
+            held_records={**records,'final_cohort':hold['ready_ids']}
+            result['resources']['creation_hold']=_attributed_resources(held_records,hold['window'])
+            result['resources']['creation_hold'].update(actual_ready_count=hold['actual_ready_count'],
+                requested_count=hold['requested_count'],memory_basis='raw_pss_including_guest')
+        else:
+            result['resources']['creation_hold']={'status':'unavailable','reason':hold.get('reason'),
+                'actual_ready_count':hold.get('actual_ready_count'),'requested_count':hold.get('requested_count')}
     cgroup_series=records.get('cgroup_series') or []
+    if records.get('sched_observation') is not None:
+        from .sched_observation import analyze_trace
+        trace=records['sched_observation']
+        observed=analyze_trace(trace)
+        sampled=result['resources'].get('cpu',{}).get('sampled_peak_cores')
+        observed['sampled_peak_cores']=sampled
+        observed['sampled_window']=window
+        observed['window_note']='trace boundaries use ktime; sampled window retains its own clock'
+        result['resources']['sched_cpu']=observed
+        if 'steady' in trace.get('windows',{}):
+            result['resources']['sched_cpu_steady']=analyze_trace(trace,'steady')
     if cgroup_series:
         from .metrics import cgroup_cpu_seconds, cgroup_true_peak
         result['resources']['cgroup']={**cgroup_true_peak(cgroup_series), **cgroup_cpu_seconds(cgroup_series),
@@ -429,6 +450,14 @@ def verify_case(directory):
             density_ref=next((row for row in records['raw_refs'] if row.get('logical_name')=='density.json'),None)
             if density_ref is None or json.loads((root/density_ref['path']).read_bytes())!=records['density']:
                 raise ValueError('density curve metadata does not match raw trace evidence')
+        if records.get('creation_hold') is not None:
+            hold_ref=next((row for row in records['raw_refs'] if row.get('logical_name')=='hold.json'),None)
+            if hold_ref is None or json.loads((root/hold_ref['path']).read_bytes())!=records['creation_hold']:
+                raise ValueError('creation HOLD metadata does not match raw evidence')
+        if records.get('sched_observation') is not None:
+            trace_ref=next((row for row in records['raw_refs'] if row.get('logical_name')=='sched.json'),None)
+            if trace_ref is None or json.loads((root/trace_ref['path']).read_bytes())!=records['sched_observation']:
+                raise ValueError('sched metadata does not match raw evidence')
         if json.loads((root/'summary.json').read_bytes())!=analyze_case(records):
             raise ValueError('sealed summary does not match evidence and window')
         return manifest

@@ -1,0 +1,8 @@
+{
+  "vmlinuz-virt": "01c33bc9a2a61cdde9eea7b6f3e43da6ba115b3fdcb76991a94415627b4c6768",
+  "initramfs-virt": "e86bef249f913654f1e869be5e66e984c1b949521cddd3d67f778238ac0a18e9",
+  "config-6.12.114-0-virt": "68428225ba2fc95116de21789fd0591697cd0506a7b732be2afdd0bfc5b1efcf",
+  "kvm-smoke": "40c600fb8aaa9aa9f71ab3a430be8edd2c328d68f9ff0da3c1ac954fc85e3cc9",
+  "kvm-smoke.c": "7c2156478f6a85fa15259d44acac8aa6a4ba9e5ba0b82644571bbcc1106b9a7c",
+  "probe-initramfs.gz": "e5a44aa13090f507201bac94d7d0af4965aa92deba496f7b340e1b7fa7cc6dc3"
+}
