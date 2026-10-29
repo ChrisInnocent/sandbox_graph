@@ -91,3 +91,18 @@ def test_failed_node_enqueues_supervision_job_and_handler_records_gap():
     assert result['decisions'][0]['status'] == 'model_unavailable'
     with repo.transaction() as tx:
         assert len(tx.scan('agent_reviews')) == 1
+
+
+def test_supervision_without_budget_is_succeeded_with_explicit_gap():
+    """issue #10：无模型接线时不 blocked（否则拉黑 F4 归档），但显式留缺口、不假装已诊断。"""
+    from sandbox_graph.runtime.worker import SupervisionJobHandler
+    repo = MemoryRepository(FakeClock())
+    _failed_node(repo)
+    supervisor = AgentSupervisor(repo, gateway=None)
+    handler = SupervisionJobHandler(supervisor)
+    result = asyncio.run(handler({'payload': {'owner_agent_id': 'agent:work:G_A'}, 'deadline': 10 ** 9}))
+    assert result['execution_status'] == 'succeeded'
+    assert result['decisions'] == [] and result['remedies'] == []
+    assert 'supervision skipped' in result['note']
+    # 缺口可见：记录仍在待看护，未被伪造成已处理
+    assert len(supervisor.pending('agent:work:G_A')) == 1

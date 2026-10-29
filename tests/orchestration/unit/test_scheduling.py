@@ -96,3 +96,33 @@ def test_quarantined_lease_is_reported_distinctly(repository):
         assert tx.get('work_instances',f'{run.run_id}:{plan.hash}',) is None  # 仅为占位；下行为真实断言
         work=[x['body'] for x in tx.scan('work_instances') if x['body']['group_id']=='A']
         assert [w['queue_reason'] for w in work]==['lease_quarantined']
+
+
+def _one_work_run(repository, domain):
+    case=Case(capability='supported',adapter_verified=True,case_id='case',group_id='G_A',
+              sandbox_type='synthetic',scenario_id='B01',method_id='B01.TEMPLATE',priority='base',
+              conditions=({'cpu':1},),conflict_domains=(domain,))
+    service=RunService(repository,PlanCompiler([case]))
+    plan=service.preview(Selection(),authorized_groups={'G_A'})
+    run=service.start('s',plan.hash,authorized_groups={'G_A'})
+    scheduler=SchedulingService(repository)
+    scheduler.expand_work(run.run_id,'G_A',plan_ref=plan.hash)
+    token=LeaseService(repository).acquire_thread('group','worker',100)
+    return scheduler,run,token
+
+
+def test_closed_or_released_lease_does_not_block_dispatch(repository):
+    """issue #11：上一个 run 收尾留下的 closed/released lease 不得永久阻塞后续 dispatch。"""
+    scheduler,run,token=_one_work_run(repository,'host_C')
+    with repository.transaction() as tx: tx.put('resource_leases','host_C',{'status':'closed','domain':'host_C'})
+    assert len(scheduler.dispatch_work(run.run_id,'G_A',token=token,max_concurrency=1,deadline=1090))==1
+
+
+def test_quarantine_lease_still_blocks_with_explicit_reason(repository):
+    """issue #3 语义保留：quarantine 仍阻塞并显式报 lease_quarantined。"""
+    scheduler,run,token=_one_work_run(repository,'host_Q')
+    with repository.transaction() as tx: tx.put('resource_leases','host_Q',{'status':'quarantine','domain':'host_Q'})
+    assert scheduler.dispatch_work(run.run_id,'G_A',token=token,max_concurrency=1,deadline=1090)==[]
+    with repository.transaction() as tx:
+        work=[x['body'] for x in tx.scan('work_instances') if x['body']['group_id']=='G_A']
+        assert [x['queue_reason'] for x in work]==['lease_quarantined']

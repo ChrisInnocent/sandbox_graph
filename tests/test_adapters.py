@@ -272,3 +272,38 @@ class KuasarClusterTests(unittest.TestCase):
         adapter = adapters.Adapter(config)
         with patch.object(adapters, "request", return_value=reply({"cpuCount": 4, "memoryMB": 8192})):
             self.assertEqual(adapter.effective_spec({"sandbox_id": "s-1"}, 5), {"vcpus": None, "memory_mib": None})
+
+    def test_route_key_is_persisted_and_survives_restart(self):
+        """issue #12：routeKey 必须落 instance vault；进程重启（内存丢失）后仍可删除，不再孤儿化。"""
+        import tempfile
+        from pathlib import Path
+        tmp = tempfile.TemporaryDirectory(); self.addCleanup(tmp.cleanup)
+        config = {**self.config, "instance_credentials": {
+            "path": str(Path(tmp.name) / "private"), "scope": "run-1", "generation": 1}}
+        adapter = adapters.Adapter(config)
+        with patch.object(adapters, "request", return_value=reply(
+                {"sandboxID": "s-1", "routeKey": "rk-1"}, status=201)):
+            sandbox = adapter.create("run-1", 5)
+        self.assertEqual(adapter._instance_vault.observe_route("s-1").get("routeKey"), "rk-1")
+        restarted = adapters.Adapter(config)          # 模拟进程重启
+        self.assertEqual(restarted._route_keys, {})
+        with patch.object(adapters, "request", return_value=reply({"ok": True})) as req:
+            restarted.delete(sandbox, 5)
+        self.assertEqual(req.call_args.kwargs["headers"]["X-Kuasar-Route-Key"], "rk-1")
+
+    def test_cluster_config_boolean_is_rejected_clearly(self):
+        """issue #9：kuasar_cluster 必须是 mapping；bool 旧写法要给明确错误（不是 E1 里莫名 blocked）。"""
+        with self.assertRaises(ValueError) as ctx:
+            adapters.Adapter({**self.config, "kuasar_cluster": True})
+        self.assertIn("must be a mapping", str(ctx.exception))
+
+    def test_probe_control_plane_reports_unreachable_with_deployment_hint(self):
+        """issue #13：控制面不可达要与其它错误分开，并给出 router/sshd/防火墙 的部署指引。"""
+        adapter = adapters.Adapter(self.config)
+        with patch.object(adapters, "request", side_effect=OSError("connection refused")):
+            result = adapter.probe_control_plane(1)
+        self.assertFalse(result["reachable"])
+        self.assertEqual(result["reason"], "control_plane_unreachable")
+        self.assertIn("router", result["hint"])
+        with patch.object(adapters, "request", return_value=reply({"data": []})):
+            self.assertTrue(adapter.probe_control_plane(1)["reachable"])

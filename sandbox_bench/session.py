@@ -202,6 +202,11 @@ class BenchSession:
             return {'status':'blocked','reason':'resource_sampler_required'}
         if self.case.method_id.startswith(('B09.','B10.')) and self.density_controller is None:
             return {'status':'blocked','reason':'cohort_resource_controller_required'}
+        # issue #13：开启可达性预检时，先区分“控制面不可达”（router 仅本地/sshd 禁转发/防火墙 TTL）。
+        if self.config.get('reachability_precheck') and hasattr(self.adapter,'probe_control_plane'):
+            reach=self.adapter.probe_control_plane(min(self.case.completion.timeout_s,5))
+            if not reach.get('reachable'):
+                return {'status':'blocked',**reach}
         return {'status':'completed','environment_ref':self.case.environment_ref,'source_digest':self.case.source.digest}
 
     async def _N02(self):

@@ -111,10 +111,13 @@ class SchedulingService:
                 if not domains:
                     tx.put('work_instances',row['key'],work|{'status':'blocked','queue_reason':'missing_conflict_domains'});continue
                 reservations=[tx.get('resource_leases',d) for d in domains]
-                if any(reservations):
+                # issue #11：只把 reserved/active/quarantine 视为阻塞；closed/released 不再挡 dispatch，
+                # 否则上一个 run 收尾后留下的 closed lease 会永乁阻塞后续 run（跨 run 不可收敛）。
+                blocking=[(d,r) for d,r in zip(domains,reservations)
+                          if r and r['body'].get('status') in ('reserved','active','quarantine')]
+                if blocking:
                     # issue #3：区分“被隔离待核销”与“被其他 run 占用”，不再静默归为同一冲突。
-                    quarantined=sorted(d for d,r in zip(domains,reservations)
-                                       if r and r['body'].get('status')=='quarantine')
+                    quarantined=sorted(d for d,r in blocking if r['body'].get('status')=='quarantine')
                     tx.put('work_instances',row['key'],work|{'queue_reason':'lease_quarantined' if quarantined else 'resource_conflict'})
                     continue
                 if extension:

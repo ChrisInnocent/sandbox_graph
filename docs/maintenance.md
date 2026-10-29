@@ -126,3 +126,58 @@ git status --short
 真实 PostgreSQL 测试需要专用 `SANDBOX_GRAPH_TEST_POSTGRES_DSN`；Linux 资源采集和真实产品实验需要对应环境。没有条件时保留 skipped/blocked，不换成合成结果宣称通过。
 
 提交时同时检查代码、设计、任务、测试和说明文档的一致性。真实凭证、环境私密信息及未脱敏日志不应进入公共仓库；环境配置和运行证据遵循各自的持久化与备份策略。
+
+## 已知部署/产品侧问题与处置（GitHub issue #9–#14，2026-10-28）
+
+以下四项中，**代码侧已修复的会标明**；其余是部署机或产品侧行为，仓库不能代替修，必须按下面处置，否则结论不可用。
+
+### #9 `kuasar_cluster` 必须是 mapping（代码侧已明确报错）
+
+- 正确形态：`kuasar_cluster = {api_host, group, domain, (credential XOR api_secret_env)}`。
+  - `credential` 与 `api_secret_env` **互斥且必须有一个**；`api_secret_env` 是**环境变量名**，其值是**hex** 编码的 secret。
+- 旧写法 `kuasar_cluster: true` + 独立 `cluster: {...}` 会抛 `ValueError: kuasar_cluster must be a mapping`（现有测试 `test_cluster_config_boolean_is_rejected_clearly` 覆盖），不会再变成 E1 里的莫名 `blocked`。
+- 装配脚本（部署机上的 `assemble_real.py`）需按上面四字段改写；该文件不在本仓库。
+
+### #10 supervision 无模型不再拉黑归档（代码侧已修复）
+
+`runtime/worker.py::SupervisionJobHandler` 在 `budget is None` 时改为 `succeeded + decisions: [] + note`，不再返回 `blocked/CONTRACT_MISSING`，因此 F1/F2/F4 的 report/archive 链路不会被缺模型卡死。缺口仍然**显式可见**（`note` 与待看护记录保留），不假装已诊断；模型接线后该分支自动不再触发。
+
+### #11 跨 run lease 不可收敛（代码侧已修复）
+
+`scheduling.py::dispatch_work` 只把 `reserved/active/quarantine` 视为阻塞；`closed/released` 不再挡住后续 run 的 dispatch。quarantine 仍按 issue #3 显式阻塞并报 `lease_quarantined`（`test_closed_or_released_lease_does_not_block_dispatch`、`test_quarantine_lease_still_blocks_with_explicit_reason` 覆盖）。历史遗留的 quarantine 仍需用 `reclaim-leases` 按“观察到 gone”核销，不能直接改状态。
+
+### #12 kuasar cluster routeKey 持久化（代码侧已修复）
+
+`create` 现在把 `routeKey` 写入 `private`，由 `InstanceTokenVault` 落盘；进程重启后 `_restore_instance`/`observe_route` 能恢复，`delete/pause/resume/execute` 不再因内存丢失而孤儿化（`test_route_key_is_persisted_and_survives_restart` 覆盖）。
+前提：`instance_credentials` 必须配置（`BenchSession` 默认注入 `<case>/private-instances`，scope=work_id, generation=1）。**不要**复用 generation；删除后的实例需要新 generation。
+
+### #13 kuasar 单节点 router 仅本地 + sshd 禁转发（部署侧，仓库提供预检）
+
+部署机处置（任选其一，推荐 A）：
+
+```bash
+# A) 受管反向代理（systemd 托管，避免重启失效）
+cat >/etc/systemd/system/kuasar-router-proxy.service <<'EOF'
+[Unit]
+Description=Forward 0.0.0.0:13100 -> 127.0.0.1:3100 (kuasar router)
+After=network-online.target
+[Service]
+ExecStart=/usr/bin/socat TCP-LISTEN:13100,fork,reuseaddr TCP:127.0.0.1:3100
+Restart=always
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload && systemctl enable --now kuasar-router-proxy
+# 永久放通（不要用 --timeout，否则 2 小时后端口被回收，run 中途 E1 失败）
+firewall-cmd --add-port=13100/tcp --permanent && firewall-cmd --reload
+```
+
+- 或 B) 让 router 监听可达网卡（`router.yaml` ingress 绑内网 IP），配源 IP 限制。
+- 或 C) 临时 `AllowTcpForwarding local`（仅本地转发）。
+- **仓库侧预检**：在 case/config 里设 `reachability_precheck: true`，`N01` 会先探测控制面；不可达时返回 `blocked/control_plane_unreachable` 并附部署指引（`test_probe_control_plane_reports_unreachable_with_deployment_hint` 覆盖），而不是等 E1 随机失败。
+
+### #14 kuasar 单节点不应用 cgroup（产品侧；仓库已降级为 unverified）
+
+- 现状：单节点 kuasar 的 public detail 不是逐实例证据。本仓库对 `product=kuasar` 且**非 cluster** 的 `effective_spec` 直接返回 `{vcpus: None, memory_mib: None}` → 结论为 **`unverified`**（不是 `invalid`）。真机上出现的 `invalid`（120 vcpu/400GiB）说明跑的是**旧版适配器**，同步本仓库后不会再误报 invalid。
+- **但 `unverified` 不等于隔离已验证**：单节点 kuasar 若不应用 cgroup，则 `B03/B04/B10` 等**资源隔离类方法在该单节点上不可用于选型**。要得到可用结论，必须在**产品侧**让沙箱创建应用 cgroup 限制（检查 `e2b-snp-*` template 的资源限制是否生效），并在真实部署上复测 `effective_spec`。
+- 报告中必须写明：单节点 kuasar 的资源隔离结论为 `unverified/blocked`，不得以 `invalid` 或“通过”呈现。

@@ -196,6 +196,9 @@ class Adapter:
             if not isinstance(route, str) or not route:
                 raise ValueError("kuasar cluster create must return a route key")
             self._route_keys[result["sandbox_id"]] = route
+            # issue #12：把 routeKey 写进 private，使 _save_instance 持久化到 instance vault；
+            # 进程重启后 _restore_instance/observe_route 能恢复，不再因内存丢失而孤儿化。
+            result.setdefault("private", {})["routeKey"] = route
             self._owned.setdefault(run_id, set()).add(result["sandbox_id"])
         self._save_instance(result)
         return result
@@ -316,6 +319,22 @@ class Adapter:
                 raise TransportError("repeated sandbox pagination cursor")
             cursors.add(cursor)
             query["nextToken"] = cursor
+
+    def probe_control_plane(self, timeout):
+        """E1 可达性预检（issue #13）。
+
+        把“控制面不可达”与其它错误分开，并给出部署指引（router 仅本地 + sshd 禁转发 +
+        带 TTL 的防火墙端口是 #13 的根因）。仅在 config 开启 reachability_precheck 时被 _N01 调用。
+        """
+        try:
+            response = self._control("GET", "/sandboxes?limit=1", timeout)
+        except OSError as error:
+            return {"reachable": False, "reason": "control_plane_unreachable",
+                    "hint": "router 可能仅绑 127.0.0.1 且 sshd 禁转发；请用受管反向代理"
+                            "（systemd 托管）或把 router 绑到可达网卡，并永久放通端口"
+                            "（不要依赖带 TTL 的防火墙规则）。",
+                    "error": type(error).__name__}
+        return {"reachable": True, "status": getattr(response, "status", None)}
 
     def effective_spec(self, sandbox, timeout):
         data = self.info(sandbox, timeout)

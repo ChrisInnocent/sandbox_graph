@@ -468,7 +468,11 @@ class SupervisionJobHandler:
     async def __call__(self,job):
         owner=job['payload']['owner_agent_id']
         if self.budget is None:
-            return {'execution_status':'blocked','error':{'code':'CONTRACT_MISSING','reason':'agent context budget required'}}
+            # issue #10：无模型接线时不硬性 blocked（否则 supervision 会把 F1/F2/F4 归档链路拉黑）。
+            # 不假装已诊断：显式记缺口（decisions=[] + note），让 report/archive 继续；
+            # 模型接线后 budget is not None，本分支不再触发。
+            return {'execution_status':'succeeded','decisions':[],'remedies':[],
+                    'note':'agent budget not configured; supervision skipped (diagnosis gap)'}
         records=self.supervisor.pending(owner)
         decisions=await self.supervisor.review(owner,allowed_fields=self.allowed_fields,
             accessible_evidence=self.accessible_evidence,budget=self.budget,fields_by_node=self.fields_by_node)
