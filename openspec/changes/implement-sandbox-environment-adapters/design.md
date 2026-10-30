@@ -515,3 +515,13 @@ Cube compute 的 VMM 与 shim 同进程，不要求不存在的独立 CH 制品�
 
 
 D19 鉴权补充：group 准备脚本接受可选独立 api_secret_ref，与 manifest_key_ref 同 scope/版本；使用私有解析与 inline generation 保持上游节点兼容，省略时派生，不外泄 stdout。对应先红后绿测试覆盖独立密钥、版本冲突、重入与秘密不进入 manifest 文本。上游直接 ref 下发缺能力不伪报成功。
+
+### D20. Kuasar 构建容量与注册证据有效性
+
+`RuntimeRegistrationProbe` 读取固定 `POST /internal/node-owner` 的 `runtime` 操作。审计版本 `c14da165ecc14de0e5c0afbfba2e1b737d64ee7c` 的 `internal/orch/cluster.go::ClusterNodeInfo` 从运行中 conductor 配置解析 execution/registration 两种容量；`registry.go::updateNodeRegister` 保存上报，`buildadmission.go::localNodeOwner.Runtime` 要求当前节点连接存在，返回节点 profile。`max_builds` 精确取 `node.build_execution_capacity.max_builds`，不能取 registration 容量、正在构建数或本地配置值。
+
+线协议的 Go `omitempty` 需要区分两种缺省：已有 execution 对象内缺 `max_builds` 表示 0（该维度无限制），整个 execution 对象缺失/null 则没有该项运行证据。`capacity` 缺省同样按已审计协议解释为 0；解释新构建字段或省略的 capacity 前必须匹配声明的 orchestrator source commit。此处只核验注册上报值；产品版本/二进制/boot 的完整证明仍由 E2/C3 的其他检查组合提供，不能以 source_set 声明替代制品检查。
+
+所有参数证明依赖当前注册身份和新鲜度。错节点、缺 owner、draining、过期/未来 heartbeat 都使相关参数为 unknown，不产生参数修复建议。年龄在响应收到后计算，带时区的时间戳才有效。计数须为非负 int64，拒绝 bool、字符串、小数、null 和溢出；单位冲突保留 unknown，不使整个检查抛异常。公开证据只保留白名单字段，不归档注册响应中的 key_pairs/resume_token。
+
+EAT-06/12 增量门禁在 `tests/environment/unit/test_registration_effective.py`：独立 execution/registration 值、0/缺失对象、版本/角色/时间/身份/单位/类型反例、敏感字段过滤，以及通过真实 ProductVerification 接线证明 startup_bound 与 runtime_effective 分离。该增量不完成 limiter/pool/scheduler 全字段覆盖，14.1/14.2 继续追踪。

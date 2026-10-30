@@ -37,7 +37,9 @@ AgentENV 控制容器由 `owned-container` primitive 激活。`expected_before` 
 
 `python scripts/environment/tune_ublk.py --target 1024 --output /absolute/ublk.conf --manifest /absolute/ublk-recipe.json` 仅准备配置资产；已有目标文件必须传 `--before-sha256`。该有限数字只是语法示例，不是推荐容量。recipe 写 `/etc/modprobe.d/sandbox-graph-ublk.conf` 后，仅在模块未加载且 `modinfo -p` 确认支持 `ublks_max` 时固定执行 modprobe，再读 sysfs 复检。已加载值不符则返回需要维护，不卸载模块。`targets.host_attributes.ublks_max` 在 server 角色使用固定远端 `probe.ublk.v1`，当前值与下次加载目标分开。
 
-参数证据分为 rendered_only、startup_bound、runtime_effective。当前直接运行值覆盖 Cube 上报容量/并发/配额、Kuasar registry capacity 和 AgentENV 宿主 ublk 上限。其他 limiter/pool/scheduler 参数具有源码规则、配置 CAS 和启动绑定；本 profile 尚无对应直接运行值探针，返回带源码和组件清单的 unsupported；未登记字段或观察暂不可用仍为 unknown。不能以配置文件或“服务 active”证明这些值生效。
+参数证据分为 rendered_only、startup_bound、runtime_effective。当前直接运行值覆盖 Cube 上报容量/并发/配额、Kuasar registry capacity/构建执行 max_builds 和 AgentENV 宿主 ublk 上限。其他 limiter/pool/scheduler 参数具有源码规则、配置 CAS 和启动绑定；本 profile 尚无对应直接运行值探针，返回带源码和组件清单的 unsupported；未登记字段或观察暂不可用仍为 unknown。不能以配置文件或“服务 active”证明这些值生效。
+
+2026-10-26 增量：Kuasar 集群绑定的 `POST /internal/node-owner`（仅 `op=runtime`）读取 `build_execution_capacity.max_builds`，与 registration 容量分开。需要声明匹配审计的 orchestrator source commit、conductor 角色及当前节点身份/heartbeat。已有 execution 对象内省略 max_builds 按上游协议表示 0/无限制；缺失整个对象保持 unknown。单机没有管理绑定时仍为未知，不用本地配置填充。当前数值不符可生成配置差异，注册陈旧或身份不符时只报告证据缺口。限制/池/调度器的其余覆盖仍见环境 change 的 14.1/14.2。
 
 ## 原操作私有日志
 

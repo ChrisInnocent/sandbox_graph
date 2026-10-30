@@ -50,3 +50,11 @@
 仍有两类非环境实现未完成，分别由父 tasks 54.1/54.2 与环境 tasks 14.1/14.2 跟踪：通用生产可信黑盒断言/固定观察脚本，以及部分参数的真实运行值探针。之前将具体 oracle 一概归为部署者输入的表述不充分；本项目仍需交付通用内容。当前 profile 缺探针也不能直接等价于上游完全不存在观测接口，应逐字段确认并实现。
 
 2026-10-24 的全仓与固定门禁是对应快照的历史证据；提交前发现 operation_sync 及对应测试已发生后续修改，增量测试另记，不冒充已经重跑当前整个工作树。提交包含现有实现、设计、任务与上述未完成状态；真实后端和上游能力限制保持分列。
+
+## 2026-10-26 提交及后续探针增量
+
+快照提交为 `2572962`，commit message 记录三个 change 的 tasks 进度、两类非环境缺口、真实后端未验收状态及历史/当次验证边界。
+
+随后新增 Kuasar 构建执行容量读取和注册参数证明修复，范围见环境 design D20。TDD 首轮新文件 25 failed / 2 passed；实现并补版本、复检接线用例后，三个定向文件 42 passed。完整 `tests/environment` 回归 **359 passed / 8 skipped**（76.85 秒）；跳过为缺真实环境合同，不计验收通过。JUnit、原日志分别为本地 `/tmp/environment-registration-20261026.xml`、`/tmp/environment-registration-20261026.log`。
+
+三 change OpenSpec strict/链接校验 valid（`/tmp/registration-planning-20261026.json`）。固定 development 用例清单已重新收集为 **2560** 项，persistent/isolation/release 保持 60/1/3；这是清单更新，本次没有重跑全部 2560 项，不复用历史 2529/2529 作为新快照门禁结果。环境 14.1/14.2 保持未完成，其余 limiter/pool/scheduler 字段与通用生产 oracle 仍须补齐。

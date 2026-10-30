@@ -16,7 +16,7 @@ SOURCES={
 }
 DIRECT={
  ('cubesandbox','cubelet'): {'quota_cpu','max_sandboxes','create_concurrency'},
- ('kuasar','conductor'): {'sandbox_capacity'},
+ ('kuasar','conductor'): {'sandbox_capacity','max_builds'},
 }
 
 
@@ -24,7 +24,10 @@ def catalog():
     return [{'product':product,'component':component,'parameter':name,'path':rule[0],
         'unit':rule[1],'profile':'audited-runtime-observation.v1',
         'observation':'management_registration' if name in DIRECT.get((product,component),()) else 'startup_binding_only',
-        'source':SOURCES[(product,component)][0],'source_scope':SOURCES[(product,component)][1]}
+        'source':('kuasar-components/orchestrator/internal/orch/cluster.go' if product=='kuasar' and name=='max_builds'
+                  else SOURCES[(product,component)][0]),
+        'source_scope':('ClusterNodeInfo / build_execution_capacity.max_builds' if product=='kuasar' and name=='max_builds'
+                        else SOURCES[(product,component)][1])}
         for (product,component),rules in sorted(RULES.items()) for name,rule in sorted(rules.items())]
 
 
@@ -32,7 +35,7 @@ def capability(product,name,roles):
     rows=[row for row in catalog() if row['product']==product and row['parameter']==name]
     if not rows:return None
     component_roles={'cubelet':{'compute'},'CubeAPI':{'control'},'CubeMaster':{'control'},
-        'conductor':{'conductor','runtime'},'server':{'server'},'scheduler':{'scheduler'}}
+        'conductor':{'conductor'},'server':{'server'},'scheduler':{'scheduler'}}
     selected=[r for r in rows if set(roles)&component_roles[r['component']]]
     if not selected:return None
     return {'profile':'audited-runtime-observation.v1',
